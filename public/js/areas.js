@@ -6,9 +6,9 @@ import { mulberry, shuffle, clamp, lerp, TEX } from './world.js';
 import { buildNav, stepSentries } from './sentry.js';
 
 export const DIFF = {
-  easy: { label: 'Easy', time: 600, blurb: 'Slow sentries, short course', search: .5, fakes: 0, trap: 0, digits: 3, sentries: 2, sSpeed: 2.7, sense: 7, beam: 16, pick: 2, course: 16, cMul: 1, blink: false },
-  hard: { label: 'Hard', time: 300, blurb: 'More sentries, fake keys', search: .9, fakes: 2, trap: .15, digits: 4, sentries: 4, sSpeed: 3.3, sense: 10, beam: 19, pick: 3, course: 22, cMul: 1.3, blink: true },
-  impossible: { label: 'Impossible', time: 120, blurb: 'Two minutes. Good luck.', search: 1.3, fakes: 4, trap: .25, digits: 4, sentries: 6, sSpeed: 3.9, sense: 13, beam: 22, pick: 4, course: 28, cMul: 1.6, blink: true },
+  easy: { label: 'Easy', time: 600, blurb: 'Slow monsters, shorter course', search: .5, fakes: 0, trap: 0, digits: 3, sentries: 3, sSpeed: 2.7, sense: 7, beam: 16, pick: 2, course: 26, cMul: 1, blink: false, lurkProps: 3, ambush: 4 },
+  hard: { label: 'Hard', time: 300, blurb: 'More monsters, fake keys', search: .9, fakes: 2, trap: .15, digits: 4, sentries: 5, sSpeed: 3.3, sense: 10, beam: 19, pick: 3, course: 34, cMul: 1.3, blink: true, lurkProps: 5, ambush: 7 },
+  impossible: { label: 'Impossible', time: 120, blurb: 'Two minutes. Good luck.', search: 1.3, fakes: 4, trap: .25, digits: 4, sentries: 7, sSpeed: 3.9, sense: 13, beam: 22, pick: 4, course: 42, cMul: 1.6, blink: true, lurkProps: 8, ambush: 10 },
 };
 export const AREA_NAMES = ['The Locked Study', 'The Grinder'];
 export const ROOMS = 2;
@@ -32,7 +32,7 @@ const segDist = (px, pz, a) => { const dx = a.bx - a.ax, dz = a.bz - a.az, L2 = 
 /* =================================================================== ROOM 1: THE LOCKED STUDY */
 function buildStudy(world, cfg) {
   const rng = mulberry(cfg.seed), d = DIFF[cfg.diff], n = cfg.n;
-  const W = Math.min(36 + 5 * (n - 1), 62), D = Math.min(28 + 3 * (n - 1), 48);
+  const W = Math.min(48 + 6 * (n - 1), 84), D = Math.min(36 + 4 * (n - 1), 62);
   const theme = [['#4a2232', '#3a1a28', 26], ['#223a4a', '#1a2e3a', 30], ['#2e3a22', '#24301a', 22]][(cfg.level - 1) % 3];
   const room = world.room(W, D, { floor: world.tex(TEX.wood(theme[2]), W / 4, D / 4, rng), wall: TEX.wallpaper(theme[0], theme[1]), height: 3.6 });
   const A = { name: AREA_NAMES[0], W, D, room, props: new Map(), spawn: spawns(D, n), kind: 'study' };
@@ -81,7 +81,8 @@ function buildStudy(world, cfg) {
   pieces.forEach(p => { if (p.horiz) { run(p.ax, p.az - T / 2, p.bx, p.bz - T / 2, 0, -1); run(p.ax, p.az + T / 2, p.bx, p.bz + T / 2, 0, 1); } else { run(p.ax - T / 2, p.az, p.bx - T / 2, p.bz, -1, 0); run(p.ax + T / 2, p.az, p.bx + T / 2, p.bz, 1, 0); } });
   shuffle(slots, rng);
   let safePlaced = false;
-  slots.slice(0, Math.round(slots.length * .72)).forEach((s, i) => {
+  const usedSlots = Math.round(slots.length * .62);
+  slots.slice(0, usedSlots).forEach((s, i) => {
     let type = WALL_TYPES[Math.floor(rng() * WALL_TYPES.length)];
     if (!safePlaced && i === 5) { type = 'safe'; safePlaced = true; }
     const pr = placeProp(world, A, type, rng, s.x, s.z, Math.atan2(s.nx, s.nz), true, [s.nx, s.nz]);
@@ -89,8 +90,9 @@ function buildStudy(world, cfg) {
   });
   // floor props on a jittered grid
   const blockedSpot = (x, z) => (Math.abs(x) < 3.4 && z > D / 2 - 4.4) || (Math.abs(x) < 3.4 && z < -D / 2 + 3.4) || pieces.some(p => segDist(x, z, p) < 1.9) || nearGap(x, z, 2.6) || nearJail(x, z, 2.4);
-  for (let x = -W / 2 + 2.7; x <= W / 2 - 2.7; x += 3.7) for (let z = -D / 2 + 2.7; z <= D / 2 - 2.7; z += 3.7) {
-    const px = x + (rng() - .5) * .7, pz = z + (rng() - .5) * .7; if (blockedSpot(px, pz) || rng() < .22) continue;
+  const PROP_BUDGET = 430;
+  for (let x = -W / 2 + 2.7; x <= W / 2 - 2.7; x += 4.1) for (let z = -D / 2 + 2.7; z <= D / 2 - 2.7; z += 4.1) {
+    const px = x + (rng() - .5) * .7, pz = z + (rng() - .5) * .7; if (blockedSpot(px, pz) || rng() < .25 || A.props.size >= PROP_BUDGET) continue;
     placeProp(world, A, FLOOR_TYPES[Math.floor(rng() * FLOOR_TYPES.length)], rng, px, pz, Math.floor(rng() * 4) * Math.PI / 2);
   }
   for (let i = 0; i < 6; i++) { const rug = new THREE.Mesh(new THREE.PlaneGeometry(3 + rng() * 2, 2 + rng() * 1.5), toon([P.red, P.purple, P.teal][i % 3])); rug.rotation.x = -Math.PI / 2; rug.position.set((rng() - .5) * (W - 6), .012, (rng() - .5) * (D - 6)); rug.receiveShadow = true; world.root.add(rug); }
@@ -102,6 +104,7 @@ function buildStudy(world, cfg) {
   for (let i = 0; i < A.need - 1; i++) contents[searchables[k++]] = 'key';
   contents[searchables[k++]] = 'note';
   for (let i = 0; i < d.fakes + Math.floor((cfg.level - 1) / 2); i++) if (k < searchables.length) contents[searchables[k++]] = 'fake';
+  for (let i = 0; i < d.lurkProps + (cfg.level - 1); i++) if (k < searchables.length) contents[searchables[k++]] = 'lurker';
   for (; k < searchables.length; k++) if (rng() < d.trap) contents[searchables[k]] = 'trap';
   A.contents = contents;
   A.code = Array.from({ length: d.digits }, () => Math.floor(rng() * 10)).join('');
@@ -112,8 +115,11 @@ function buildStudy(world, cfg) {
   A.sentryCount = Math.min(d.sentries + Math.floor(n / 2) + (cfg.level - 1), 14);
   const sStart = []; for (let i = 0; i < A.sentryCount; i++) { let p; for (let t = 0; t < 200; t++) { p = A.nav.randomFree(rng); if (Math.hypot(p.x, p.z - D / 2) > 14 && !nearJail(p.x, p.z, 2)) break; } sStart.push(p); }
   const brains = []; const srng = mulberry(cfg.seed ^ 0x5eed);
+  const KINDS = ['gloom', 'stitch', 'gulp'];
+  A.lurkers = []; const lurkN = d.ambush + (cfg.level - 1) + Math.floor(n / 2);
+  for (const s of slots.slice(usedSlots)) { if (A.lurkers.length >= lurkN) break; const x = s.x + s.nx * .7, z = s.z + s.nz * .7; if (Math.hypot(x, z - D / 2) < 11 || nearJail(x, z, 3) || !A.nav.free(A.nav.idx(x, z)) || A.lurkers.some(l => Math.hypot(l.x - x, l.z - z) < 7)) continue; A.lurkers.push({ x, z, f: Math.atan2(s.nx, s.nz), kind: KINDS[A.lurkers.length % 3] }); }
 
-  A.init = S => { S.found = 0; S.need = A.need; S.opened = {}; S.door = false; S.safeOpen = false; S.safeTries = 0; S.noteBy = null; S.jailed = {}; S.freedAt = 0; S.caught = []; S.sentries = sStart.map(p => ({ x: +p.x.toFixed(2), z: +p.z.toFixed(2), f: 0, st: 'patrol' })); };
+  A.init = S => { S.found = 0; S.need = A.need; S.opened = {}; S.door = false; S.safeOpen = false; S.safeTries = 0; S.noteBy = null; S.jailed = {}; S.freedAt = 0; S.caught = []; S.lurk = {}; S.sentries = sStart.map(p => ({ x: +p.x.toFixed(2), z: +p.z.toFixed(2), f: 0, st: 'patrol' })); };
   A.info = (pid, S) => {
     if (pid === 'door') return S.door ? null : S.found >= S.need ? { label: 'Unlock the door', hold: false } : { label: `Locked · ${S.need - S.found} more key${S.need - S.found === 1 ? '' : 's'}`, hold: false, locked: true };
     if (pid === 'jail') { const k = Object.keys(S.jailed).length; return k ? { label: `Pick the jail lock (${k} inside)`, hold: true, holdTime: d.pick } : { label: 'The jail is empty', done: true }; }
@@ -133,6 +139,7 @@ function buildStudy(world, cfg) {
     const ps = ctx.players.map(p => Object.assign({}, p, { jailed: !!S.jailed[p.id] }));
     const caught = stepSentries(S, brains, A.nav, ps, ctx.now, dt, { speed: d.sSpeed, sense: d.sense, beam: d.beam, grace: 8000 }, srng, cfg.startAt);
     caught.forEach(c => { S.jailed[c.id] = true; S.caught = (S.caught || []).slice(-6).concat([{ id: c.id, by: c.by, at: ctx.now }]); });
+    if (ctx.now > cfg.startAt + 3000) A.lurkers.forEach((l, i) => { if (S.lurk[i]) return; const p = ps.find(p => !p.eaten && !p.jailed && Math.hypot(p.x - l.x, p.z - l.z) < 2.3); if (p) S.lurk[i] = { by: p.id, at: ctx.now }; });
   };
   const shown = new Set(); let lastTries = 0;
   A.render = (dt, S, ctx) => {
@@ -146,7 +153,7 @@ function buildStudy(world, cfg) {
     if (S.safeTries !== lastTries) { if (ctx.fresh && S.safeTries > lastTries) ctx.fx('safeWrong'); lastTries = S.safeTries; }
     const k = Object.keys(S.jailed || {}).length; A.jail.light.intensity = (k ? 7 : 3) * (.8 + Math.sin(ctx.now / 180) * .2); shackle.rotation.z = 0;
   };
-  A.objective = S => S.door ? 'The door is open. Everyone into the exit!' : S.found >= S.need ? 'All keys found. Unlock the door in the north wall!' : `Find ${S.need} keys in the dark. One is in the safe; its code is on a note. Sentries hunt flashlights.`;
+  A.objective = S => S.door ? 'The door is open. Everyone into the exit!' : S.found >= S.need ? 'All keys found. Unlock the door in the north wall!' : `Find ${S.need} keys in the dark. One is in the safe; its code is on a note. Monsters hunt flashlights, and some are hiding.`;
   A.progress = S => `Keys ${S.found}/${S.need}`;
   A.exitOpen = S => S.door;
   A.ground = (p, prev) => p.y <= 0 ? { top: 0 } : null;
@@ -158,18 +165,20 @@ function lavaDraw(x, s, rng) { x.fillStyle = '#1a0503'; x.fillRect(0, 0, s, s); 
 function buildGrinder(world, cfg) {
   const rng = mulberry(cfg.seed), d = DIFF[cfg.diff], n = cfg.n;
   const mul = d.cMul * (1 + .06 * (cfg.level - 1));
-  const W = 30 + 2 * (n - 1);
-  const segs = Math.min(d.course + 3 * (cfg.level - 1), 40);
+  const W = 36 + 2 * (n - 1);
+  const segs = Math.min(d.course + 4 * (cfg.level - 1), 60);
   // lay out the course from south (start) to north (goal), in local coordinates first
   const plats = []; const add = o => { plats.push(o); return o; };
   let prev = add({ type: 'start', x: 0, y: 2, z: 0, w: 7, d: 7 });
-  const types = ['static', 'static', 'narrow', 'move', 'lift', 'static', 'move', 'spinner'].concat(d.blink ? ['blink', 'blink'] : []);
+  const types = ['static', 'narrow', 'move', 'lift', 'spinner', 'hops', 'fire', 'laser', 'blade', 'pusher', 'move', 'narrow'].concat(d.blink ? ['blink', 'blink', 'hops'] : []);
+  const queue = [];
   for (let k = 0; k < segs; k++) {
-    let type = (k + 1) % 6 === 0 ? 'check' : types[Math.floor(rng() * types.length)];
+    let type = queue.length ? queue.shift() : (k + 1) % 7 === 0 ? 'check' : types[Math.floor(rng() * types.length)];
     if (k < 2 && type !== 'check') type = 'static';
-    const size = { static: [2.6 + rng() * 1.6, 2.6 + rng() * 1.6], narrow: [.75, 4.5 + rng() * 2], move: [2.6, 2.6], lift: [2.8, 2.8], blink: [2.6, 2.6], spinner: [7, 7], check: [5, 5] }[type];
+    if (type === 'hops') { type = 'pillar'; for (let q = 0; q < 2 + Math.floor(rng() * 3); q++) queue.push('pillar'); }
+    const size = { static: [2.4 + rng() * 1.6, 2.4 + rng() * 1.6], narrow: [.6 + rng() * .2, 5 + rng() * 3], move: [2.4, 2.4], lift: [2.6, 2.6], blink: [2.4, 2.4], spinner: [7, 7], check: [5, 5], pillar: [1.05, 1.05], fire: [5.5, 6.5], laser: [5, 6], blade: [5, 6], pusher: [6, 6] }[type];
     const top = prev.lift ? prev.y + prev.lift : prev.y;
-    let dy = (rng() - .45) * 1.6; if (type === 'lift' || type === 'spinner' || type === 'check') dy = Math.min(dy, .2);
+    let dy = (rng() - .45) * 1.6; if (['lift', 'spinner', 'check', 'fire', 'laser', 'blade', 'pusher'].includes(type)) dy = Math.min(dy, .2); if (type === 'pillar') dy = (rng() - .5) * .8;
     const y = clamp(top + dy, 1.6, 9);
     const rise = Math.max(0, y - top);
     const gapMax = clamp(3.3 - rise * 1.6, 1.3, 3.3), gap = 1.2 + rng() * (gapMax - 1.2) * Math.min(1, .55 + .3 * mul);
@@ -182,6 +191,10 @@ function buildGrinder(world, cfg) {
     if (type === 'lift') { p.lift = 1.6 + rng() * .6; p.sp = (.7 + rng() * .3) * mul; p.ph = rng() * 6; }
     if (type === 'blink') { p.on = 2.6 / mul + 1; p.off = 1.1; p.ph = rng() * 4; }
     if (type === 'spinner') { p.ws = (1 + rng() * .4) * mul * (rng() < .5 ? 1 : -1); p.ph = rng() * 6; }
+    if (type === 'fire') { p.per = 2.6 / Math.sqrt(mul); p.ph = rng() * 4; p.jets = [[-1.4, -1.6, 0], [1.4, -1.6, 1], [-1.4, 0, 1], [1.4, 0, 0], [-1.4, 1.6, 0], [1.4, 1.6, 1], [0, -.8, 1], [0, .8, 0]].map(([x, z, g]) => ({ x, z, g })); }
+    if (type === 'laser') { p.lasers = [{ dz: -1.4, sp: (1.1 + rng() * .4) * mul, ph: rng() * 6 }, { dz: 1.4, sp: (1.1 + rng() * .4) * mul, ph: rng() * 6 }]; }
+    if (type === 'blade') { p.ws = (1.6 + rng() * .4) * Math.sqrt(mul); p.ph = rng() * 6; p.Lr = 3.4; p.amp = Math.asin(Math.min(.95, (p.w / 2 + .6) / 3.4)); }
+    if (type === 'pusher') { p.sp = (1 + rng() * .3) * mul; p.ph = rng() * 6; p.range = p.w / 2 - .5; }
     prev = p;
   }
   const goal = add({ type: 'goal', x: clamp(prev.x, -W / 2 + 6, W / 2 - 6), y: prev.lift ? prev.y + prev.lift * .5 : prev.y, z: prev.z - prev.d / 2 - 2 - 4, w: 8, d: 8 });
@@ -194,7 +207,7 @@ function buildGrinder(world, cfg) {
   room.exitZone = { x0: goal.x - goal.w / 2, x1: goal.x + goal.w / 2, z0: goal.z - goal.d / 2, z1: goal.z + goal.d / 2, y0: goal.y - .6 };
 
   const metal = new THREE.MeshToonMaterial({ map: world.tex(TEX.metal, 1, 1) });
-  const trimCol = { start: 0x7dffc4, goal: 0xffc94d, check: 0x7dffc4, static: 0x4dd6ff, narrow: 0x4dd6ff, move: 0xc38bff, lift: 0xff9a3c, blink: 0xff4d5e, spinner: 0x4dd6ff };
+  const trimCol = { start: 0x7dffc4, goal: 0xffc94d, check: 0x7dffc4, static: 0x4dd6ff, narrow: 0x4dd6ff, move: 0xc38bff, lift: 0xff9a3c, blink: 0xff4d5e, spinner: 0xff4d5e, pillar: 0x4dd6ff, fire: 0xff9a3c, laser: 0xff4d5e, blade: 0xff4d5e, pusher: 0xff4d5e };
   const hazM = new THREE.MeshToonMaterial({ map: world.tex(TEX.hazard, 2, 1) });
   plats.forEach(p => {
     const g = new THREE.Group(); world.root.add(g); p.g = g;
@@ -204,6 +217,10 @@ function buildGrinder(world, cfg) {
     [[p.w, .05, .06, 0, -p.d / 2], [p.w, .05, .06, 0, p.d / 2], [.06, .05, p.d, -p.w / 2, 0], [.06, .05, p.d, p.w / 2, 0]].forEach(([w, h, dd, x, z]) => { const t = new THREE.Mesh(new THREE.BoxGeometry(w, h, dd), tm); t.position.set(x, .01, z); g.add(t); });
     if (p.type === 'goal') { const s = new THREE.Mesh(new THREE.PlaneGeometry(2.4, .75), new THREE.MeshBasicMaterial({ map: world.signTex('EXIT', '#ffc94d'), transparent: true })); s.position.set(0, 2.2, -p.d / 2 + .2); g.add(s); const L = new THREE.PointLight(0xffc94d, 6, 10, 1.5); L.position.y = 2; g.add(L); }
     if (p.type === 'check') { const L = new THREE.PointLight(0x7dffc4, 2.5, 7, 1.6); L.position.y = 1.5; g.add(L); }
+    if (p.type === 'fire') { p.flames = p.jets.map(j => { const n = new THREE.Mesh(new THREE.CylinderGeometry(.18, .18, .12, 8), toon(0x3a3444)); n.position.set(j.x, .06, j.z); g.add(n); const f = new THREE.Mesh(new THREE.ConeGeometry(.42, 2, 10, 1, true), new THREE.MeshBasicMaterial({ color: 0xff7a1a, transparent: true, opacity: .85, depthWrite: false, side: THREE.DoubleSide })); f.position.set(j.x, 1.05, j.z); g.add(f); return f; }); }
+    if (p.type === 'laser') { p.beams = p.lasers.map(l => { [-1, 1].forEach(s => { const post = new THREE.Mesh(new THREE.BoxGeometry(.2, 2.3, .2), toon(0x3a3444)); post.position.set(s * (p.w / 2 - .1), 1.15, l.dz); outline(post, .02); g.add(post); }); const b = new THREE.Mesh(new THREE.BoxGeometry(p.w - .3, .06, .06), new THREE.MeshBasicMaterial({ color: 0xff2040 })); b.position.z = l.dz; g.add(b); return b; }); }
+    if (p.type === 'blade') { const pv = new THREE.Group(); pv.position.y = 4.2; g.add(pv); p.pv2 = pv; const rod = new THREE.Mesh(new THREE.CylinderGeometry(.05, .05, p.Lr, 6), toon(0x9d99ab)); rod.position.y = -p.Lr / 2; pv.add(rod); const bl = new THREE.Mesh(new THREE.CylinderGeometry(.8, .8, .1, 24, 1, false, Math.PI, Math.PI), toon(0xc8c4d4)); bl.rotation.x = Math.PI / 2; bl.position.y = -p.Lr; outline(bl, .02); pv.add(bl); const beam = new THREE.Mesh(new THREE.BoxGeometry(p.w + 2, .2, .3), toon(0x3a3444)); beam.position.y = 4.25; g.add(beam); }
+    if (p.type === 'pusher') { const pm = new THREE.Mesh(new THREE.BoxGeometry(.9, 1.5, p.d - .6), hazM); pm.position.y = .75; outline(pm, .03); g.add(pm); p.pm = pm; }
     if (p.type === 'spinner') {
       const post = new THREE.Mesh(new THREE.CylinderGeometry(.22, .22, .7, 10), toon(0x9d99ab)); post.position.y = .35; g.add(post);
       const pv = new THREE.Group(); pv.position.y = .4; g.add(pv); p.pv = pv; p.L = p.w / 2 - .2;
@@ -218,6 +235,10 @@ function buildGrinder(world, cfg) {
   };
   const solidAt = (p, t) => { if (p.type !== 'blink') return true; const c = p.on + p.off, f = ((t + p.ph) % c + c) % c; return f < p.on; };
   plats.forEach(p => { p.pos = t => posAt(p, t); });
+  const fireOn = (p, j, t) => { const f = (((t + p.ph + (j.g ? p.per / 2 : 0)) % p.per) + p.per) % p.per / p.per; return f < .42; };
+  const fireWarn = (p, j, t) => { const f = (((t + p.ph + (j.g ? p.per / 2 : 0)) % p.per) + p.per) % p.per / p.per; return f > .82; };
+  const laserY = (l, t) => .25 + (Math.sin(l.ph + t * l.sp) * .5 + .5) * 1.75;
+  A.hazardsAt = { fireOn, laserY };
   A.checkpoints = plats.filter(p => p.type === 'check' || p.type === 'start');
 
   A.init = S => { S.door = true; };
@@ -238,14 +259,26 @@ function buildGrinder(world, cfg) {
       const q = posAt(p, t); p.g.position.set(q.x, q.y, q.z);
       if (p.type === 'blink') { const c = p.on + p.off, f = ((t + p.ph) % c + c) % c; const on = f < p.on, warn = on && f > p.on - .9; p.mesh.material.opacity = on ? (warn ? .4 + .4 * Math.abs(Math.sin(t * 18)) : 1) : .08; p.trim.opacity = on ? .7 : .15; }
       if (p.pv) p.pv.rotation.y = p.ph + p.ws * t;
+      if (p.flames) p.jets.forEach((j, i) => { const on = fireOn(p, j, t), warn = !on && fireWarn(p, j, t); const f = p.flames[i]; f.visible = on || warn; f.scale.set(on ? 1 : .35, on ? 1 + Math.sin(t * 30 + i) * .08 : .15, on ? 1 : .35); f.position.y = on ? 1.05 : .2; });
+      if (p.beams) p.lasers.forEach((l, i) => { p.beams[i].position.y = laserY(l, t); });
+      if (p.pv2) p.pv2.rotation.z = Math.sin(p.ph + t * p.ws) * p.amp;
+      if (p.pm) p.pm.position.x = Math.sin(p.ph + t * p.sp) * p.range;
     });
     const me = ctx.me; if (!me || me.eaten || ctx.phase !== 'play') return;
     if (me.ground && me.plat && (me.plat.type === 'check' || me.plat.type === 'goal') && me.ck.plat !== me.plat) { const q = posAt(me.plat, t); me.ck = { x: q.x, z: q.z, y: q.y, plat: me.plat }; if (me.plat.type === 'check') ctx.fx('checkpoint'); }
+    if (me.inv <= 0) for (const p of plats) {
+      if (!p.flames && !p.beams && !p.pv2 && !p.pm) continue; const q = posAt(p, t); const lx = me.x - q.x, lz = me.z - q.z, ly = me.y - q.y;
+      if (Math.abs(lx) > p.w / 2 + 1.5 || Math.abs(lz) > p.d / 2 + 1.5) continue;
+      if (p.flames && ly < 2 && ly > -.3 && p.jets.some(j => fireOn(p, j, t) && Math.hypot(lx - j.x, lz - j.z) < .7)) { ctx.fx('burn'); break; }
+      if (p.beams && p.lasers.some(l => { const by = laserY(l, t); return Math.abs(lz - l.dz) < .3 && Math.abs(lx) < p.w / 2 && by > ly + .05 && by < ly + me.h - .05; })) { ctx.fx('zap'); break; }
+      if (p.pv2) { const a = Math.sin(p.ph + t * p.ws) * p.amp, bx = Math.sin(a) * p.Lr, by = 4.2 - Math.cos(a) * p.Lr; if (Math.abs(lz) < .4 && Math.abs(lx - bx) < .8 && by - .8 < ly + me.h && by > ly - .1) { ctx.fx('smack'); break; } }
+      if (p.pm) { const px = Math.sin(p.ph + t * p.sp) * p.range; if (Math.abs(lx - px) < .45 + .35 && Math.abs(lz) < (p.d - .6) / 2 + .35 && ly < 1.5 && ly > -.3) { ctx.fx('smack'); break; } }
+    }
     // spinner bars knock you off
     if (me.inv <= 0) for (const p of plats) { if (!p.pv) continue; const a = p.ph + p.ws * t, cx = Math.cos(a), cz = -Math.sin(a); const s = clamp((me.x - p.x) * cx + (me.z - p.z) * cz, -p.L, p.L); if (Math.hypot(me.x - (p.x + s * cx), me.z - (p.z + s * cz)) < .45 && me.y < p.y + .55 && me.y > p.y - .3) { ctx.fx('smack'); break; } }
     if (me.y < A.fallY) ctx.fx('fell');
   };
-  A.objective = () => 'Jump across the platforms to the gold exit. Fall in the lava and you go back to your last green checkpoint.';
+  A.objective = () => 'Jump across to the gold exit. Dodge fire jets, lasers, blades and pushers. Fall in the lava and you go back to your last green checkpoint.';
   A.progress = (S, ctx) => ctx.exitText();
   A.exitOpen = () => true;
   return A;

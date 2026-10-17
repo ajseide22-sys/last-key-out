@@ -18,7 +18,10 @@ export const P = { // palette
   cream: 0xf3e3c3, iron: 0x4a4352, brass: 0xf0b93a, green: 0x4f9e45, pink: 0xf28fb5, blue: 0x3f7fd9, white: 0xf7f2ea, black: 0x241c2a, stone: 0x8a8296, ash: 0x3b3438
 };
 
+// Ink outlines are switched off so nothing shows in the dark; only lit surfaces are visible.
+const OUTLINES = false;
 function outline(mesh, t = 0.022) {
+  if (!OUTLINES) return mesh;
   const g = mesh.geometry; g.computeBoundingBox(); const s = new THREE.Vector3(); g.boundingBox.getSize(s);
   const o = new THREE.Mesh(g, INK);
   o.scale.set(1 + 2 * t / Math.max(s.x, .01), 1 + 2 * t / Math.max(s.y, .01), 1 + 2 * t / Math.max(s.z, .01));

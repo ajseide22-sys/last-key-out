@@ -4,7 +4,7 @@ import { Net } from './net.js';
 import { Voice } from './voice.js';
 import { World, collide, wallBetween, clamp, lerp } from './world.js';
 import { BUILDERS, DIFF, AREA_NAMES, ROOMS } from './areas.js';
-import { makeSentry, animSentry } from './sentry.js';
+import { makeSentry, animSentry, makeCreature, poseCreature, CREATURE_KINDS } from './sentry.js';
 import { makeMonster, animMonster, stepMonster } from './monster.js';
 import { toon, outline } from './props.js';
 
@@ -28,7 +28,7 @@ const world = new World(scene);
 // Teammates' flashlights are real lights too: a fixed pool so shaders never recompile mid-game.
 const remoteLights = Array.from({ length: 7 }, () => { const L = new THREE.SpotLight(0xfff1d6, 0, 24, .5, .5, 1.4); scene.add(L); scene.add(L.target); return L; });
 function darkness(on) {
-  if (on) { hemi.color.set(0x6a5a90); hemi.intensity = .03; scene.fog.near = 8; scene.fog.far = 30; camera.far = 34; }
+  if (on) { hemi.color.set(0x6a5a90); hemi.intensity = 0; scene.fog.near = 8; scene.fog.far = 30; camera.far = 34; }
   else { hemi.color.set(0x9a88c8); hemi.intensity = .7; scene.fog.near = 16; scene.fog.far = 46; camera.far = 140; }
   camera.updateProjectionMatrix();
 }
@@ -43,9 +43,28 @@ let AC = null, sfxOut = null;
 const net = new Net(), voice = new Voice(net);
 function audioInit() {
   if (AC) { AC.resume(); return; }
-  try { AC = new (window.AudioContext || window.webkitAudioContext)(); sfxOut = AC.createGain(); sfxOut.gain.value = .45; sfxOut.connect(AC.destination); voice.attach(AC); voice.setVolume(settings.vol); } catch (e) { AC = null; }
+  try { AC = new (window.AudioContext || window.webkitAudioContext)(); sfxOut = AC.createGain(); sfxOut.gain.value = .45; sfxOut.connect(AC.destination); voice.attach(AC); voice.setVolume(settings.vol); creepInit(); } catch (e) { AC = null; }
 }
 function tone(f, d, type, v, delay, slide) { if (!AC) return; const t = AC.currentTime + (delay || 0); const o = AC.createOscillator(), g = AC.createGain(); o.type = type || 'sine'; o.frequency.setValueAtTime(f, t); if (slide) o.frequency.exponentialRampToValueAtTime(slide, t + d); g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(v || .2, t + .01); g.gain.exponentialRampToValueAtTime(.0001, t + d); o.connect(g); g.connect(sfxOut); o.start(t); o.stop(t + d + .05); }
+// Creepy bed that swells as monsters get close: a low drone, ragged breathing and a heartbeat.
+const creep = { on: false };
+function creepInit() {
+  if (!AC || creep.on) return; creep.on = true;
+  const out = AC.createGain(); out.gain.value = 1; out.connect(sfxOut);
+  const dg = AC.createGain(); dg.gain.value = 0; const lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 220; lp.connect(dg); dg.connect(out);
+  [43, 45.5, 61].forEach(f => { const o = AC.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; o.connect(lp); o.start(); });
+  const len = AC.sampleRate * 2, b = AC.createBuffer(1, len, AC.sampleRate), ch = b.getChannelData(0); for (let i = 0; i < len; i++) ch[i] = Math.random() * 2 - 1;
+  const src = AC.createBufferSource(); src.buffer = b; src.loop = true; const bp = AC.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 700; bp.Q.value = 1.4; const bg = AC.createGain(); bg.gain.value = 0; src.connect(bp); bp.connect(bg); bg.connect(out); src.start();
+  Object.assign(creep, { dg, bg, beatT: 0, breathPh: 0 });
+}
+function creepUpdate(dt, intensity, breath) {
+  if (!creep.on) return; const t = AC.currentTime;
+  creep.dg.gain.setTargetAtTime(.22 * intensity, t, .3);
+  creep.breathPh += dt * (1.2 + intensity * 1.6); const inhale = Math.max(0, Math.sin(creep.breathPh));
+  creep.bg.gain.setTargetAtTime(Math.max(breath, intensity * .6) * .22 * inhale, t, .08);
+  creep.beatT -= dt; const level = Math.max(intensity, breath * .8);
+  if (level > .3 && creep.beatT <= 0) { creep.beatT = 1.05 - level * .6; tone(55, .12, 'sine', .35 * level); tone(48, .14, 'sine', .28 * level, .17); }
+}
 function click(vol, pan) { if (!AC) return; const t = AC.currentTime; const o = AC.createOscillator(), g = AC.createGain(), pn = AC.createStereoPanner ? AC.createStereoPanner() : null; o.type = 'square'; o.frequency.setValueAtTime(2800 + Math.random() * 1500, t); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.0001, t + .03); o.connect(g); if (pn) { pn.pan.value = clamp(pan, -1, 1); g.connect(pn); pn.connect(sfxOut); } else g.connect(sfxOut); o.start(t); o.stop(t + .05); }
 function noise(d, v, ff, delay) { if (!AC) return; const t = AC.currentTime + (delay || 0); const len = Math.floor(AC.sampleRate * d), b = AC.createBuffer(1, len, AC.sampleRate), ch = b.getChannelData(0); for (let i = 0; i < len; i++) ch[i] = Math.random() * 2 - 1; const s = AC.createBufferSource(); s.buffer = b; const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = ff || 800; const g = AC.createGain(); g.gain.setValueAtTime(v || .2, t); g.gain.exponentialRampToValueAtTime(.0001, t + d); s.connect(f); f.connect(g); g.connect(sfxOut); s.start(t); }
 const SFX = {
@@ -57,11 +76,14 @@ const SFX = {
   trap() { tone(900, .08, 'square', .14); tone(1250, .08, 'square', .14, .09); noise(.3, .2, 3500, .05); }, step() { noise(.05, .04, 300); }, jump() { tone(300, .1, 'sine', .06, 0, 420); },
   screech() { tone(1400, .7, 'sawtooth', .28, 0, 380); tone(2100, .5, 'square', .12, .05, 700); noise(.8, .45, 5000); },
   lockpick() { tone(2400, .03, 'square', .05); }, unlock() { tone(600, .1, 'square', .14); tone(900, .16, 'triangle', .18, .1); noise(.3, .15, 2000, .05); },
-  lava() { noise(.5, .3, 600); tone(120, .5, 'sawtooth', .15, 0, 50); }
+  lava() { noise(.5, .3, 600); tone(120, .5, 'sawtooth', .15, 0, 50); },
+  scream(v = 1) { tone(900, 1.1, 'sawtooth', .32 * v, 0, 260); tone(1350, .9, 'square', .14 * v, .03, 420); tone(620, 1.2, 'sawtooth', .2 * v, .05, 180); noise(1.1, .5 * v, 4200); },
+  growl(v = 1) { tone(70 + Math.random() * 20, .7, 'sawtooth', .18 * v, 0, 45); noise(.6, .12 * v, 300); },
+  burn() { noise(.6, .4, 2500); tone(300, .3, 'sawtooth', .12, 0, 120); }, zap() { tone(1800, .25, 'square', .16, 0, 300); noise(.15, .3, 6000); }
 };
 
 /* ---------------- app state ---------------- */
-const app = { me: null, room: null, hostId: null, roster: new Map(), view: 'home', diff: 'easy', cfg: null, S: null, A: null, fresh: false, M: null, monsterShown: false, eatenAt: 0, specIdx: 0, noteCode: null, lastSnap: 0, lastPos: 0, lastTick: -1, shownScreen: null, pending: new Map(), holdT: 0, mic: { on: false, muted: false }, sentries: [], scare: null, lastCaught: 0, lastFreed: 0, clickT: 0, prevSt: [] };
+const app = { me: null, room: null, hostId: null, roster: new Map(), view: 'home', diff: 'easy', cfg: null, S: null, A: null, fresh: false, M: null, monsterShown: false, eatenAt: 0, specIdx: 0, noteCode: null, lastSnap: 0, lastPos: 0, lastTick: -1, shownScreen: null, pending: new Map(), holdT: 0, mic: { on: false, muted: false }, sentries: [], lurkV: [], jump: null, lurkSeen: {}, growlT: 0, scare: null, lastCaught: 0, lastFreed: 0, clickT: 0, prevSt: [] };
 const me = { x: 0, y: 0, z: 0, vx: 0, vz: 0, vy: 0, yaw: 0, pitch: 0, h: 1.75, stam: 100, stun: 0, inv: 0, ck: { x: 0, z: 0, y: 0 }, fl: true, eaten: false, jailed: false, ground: true, plat: null, bob: 0, stepT: 0 };
 const isHost = () => app.me && app.hostId === app.me.id;
 const nameOf = id => id === app.me?.id ? 'You' : (app.roster.get(id)?.name || 'Someone');
@@ -183,7 +205,8 @@ function applyArea(cfg, S) {
     world.clear(); app.M = null; app.monsterShown = false; app.shownScreen = null; app.noteCode = null; app.pending.clear(); app.lastTick = -1;
     darkness(true); app.scare = null; app.lastCaught = 0; app.lastFreed = 0; app.prevSt = [];
     app.cfg = cfg; app.A = BUILDERS[cfg.idx](world, cfg); app.S = S || initS(cfg); app.fresh = false;
-    app.sentries = Array.from({ length: app.A.sentryCount || 0 }, () => makeSentry(world.root));
+    app.sentries = Array.from({ length: app.A.sentryCount || 0 }, (_, i) => makeSentry(world.root, i)); app.jump = null; app.lurkSeen = {};
+    app.lurkV = (app.A.lurkers || []).map(l => { const V = makeCreature(world.root, l.kind); V.g.visible = false; V.g.position.set(l.x, 0, l.z); V.g.rotation.y = l.f; return V; });
     const order = [...app.roster.values()].sort((a, b) => a.joinedAt - b.joinedAt).map(r => r.id);
     const sp = app.A.spawn[Math.max(0, order.indexOf(app.me.id)) % app.A.spawn.length];
     Object.assign(me, { x: sp.x, y: sp.y || 0, z: sp.z, vx: 0, vz: 0, vy: 0, yaw: 0, pitch: -.05, stun: 0, inv: 0, ck: { x: sp.x, z: sp.z, y: sp.y || 0 }, eaten: !!app.S.eaten[app.me.id], jailed: false, plat: null, ground: true, stam: 100, fl: true });
@@ -200,7 +223,7 @@ function hostStart(level, idx, lost = []) {
   const cfg = { key: Math.random().toString(36).slice(2, 9), level, idx, diff: app.diff, lost, n: Math.max(1, app.roster.size), seed: (Math.random() * 2147483647) | 0, startAt: net.now() + 2800, dur: DIFF[app.diff].time };
   net.send({ t: 'bcast', e: { type: 'area', cfg } }); applyArea(cfg, null);
 }
-function goLobby() { world.clear(); darkness(false); app.A = app.S = app.cfg = null; app.M = null; app.sentries = []; if (document.pointerLockElement) document.exitPointerLock(); show('lobby'); renderLobby(); }
+function goLobby() { if (creep.on) creepUpdate(0, 0, 0); world.clear(); darkness(false); app.A = app.S = app.cfg = null; app.M = null; app.sentries = []; if (document.pointerLockElement) document.exitPointerLock(); show('lobby'); renderLobby(); }
 function timeLeft() { if (!app.cfg || !app.S) return 0; const el = Math.max(0, (net.now() - app.cfg.startAt) / 1000); return app.cfg.dur - el - (app.S.penalty || 0); }
 function inZone(p, z) { return p.x > z.x0 && p.x < z.x1 && p.z > z.z0 && p.z < z.z1 && (z.y0 === undefined || p.y > z.y0); }
 function allPlayers() {
@@ -253,9 +276,28 @@ function fx(type, d = {}) {
     case 'checkpoint': SFX.good(4); toast('Checkpoint reached.'); break;
     case 'smack': SFX.hit(); hurt(); respawn(); toast('Smacked off! Back to your checkpoint.'); break;
     case 'fell': SFX.lava(); hurt(); respawn(); toast('Into the lava. Back to your last checkpoint.'); break;
+    case 'burn': SFX.burn(); hurt(); respawn(); toast('Toasted by a fire jet. Back to your checkpoint.'); break;
+    case 'zap': SFX.zap(); hurt(); respawn(); toast('Zapped by a laser. Back to your checkpoint.'); break;
+    case 'lurker': { const kind = CREATURE_KINDS[Math.floor(Math.random() * 3)]; if (mine) startJump(makeCreature(world.root, kind), true); else { const dd = Math.hypot(d.x - me.x, d.z - me.z); if (dd < 25) SFX.scream(Math.max(.15, 1 - dd / 25) * .7); if (dd < 12) toast(`Something jumped out at ${nameOf(d.by)}!`); } break; }
   }
 }
 
+// A hidden monster leaps into your face and screams.
+function startJump(V, temp) {
+  if (app.jump || me.eaten) { if (temp) world.root.remove(V.g); return; }
+  app.jump = { at: performance.now(), V, temp }; V.g.visible = true; SFX.scream(1); hurt(); me.fl = true; if (app.holdT) app.holdT = 0;
+}
+function jumpCam(dt, t) {
+  const J = app.jump, V = J.V, e = (performance.now() - J.at) / 1000;
+  const fx = -Math.sin(me.yaw), fz = -Math.cos(me.yaw);
+  const dist = e < .18 ? lerp(1.8, .55, e / .18) : e < 1.2 ? .55 + Math.sin(e * 30) * .03 : .55 + (e - 1.2) * 6;
+  const camY = me.y + me.h - .12;
+  V.g.position.set(me.x + fx * dist, Math.max(0, camY - V.face + .05), me.z + fz * dist); V.g.rotation.y = me.yaw; V.g.scale.setScalar(e < 1.2 ? 1.1 : Math.max(.01, 1.1 - (e - 1.2) * 2));
+  poseCreature(V, 0, 'scream', dt, t);
+  camera.position.set(me.x + (Math.random() - .5) * .06, camY + (Math.random() - .5) * .06, me.z); camera.rotation.set(me.pitch * .3, me.yaw, (Math.random() - .5) * .08);
+  flash.visible = true; flash.intensity = 30 * (Math.random() < .55 ? 1 : .05);
+  if (e > 1.7) { if (J.temp) world.root.remove(V.g); else V.g.visible = false; app.jump = null; me.stun = Math.max(me.stun, .8); }
+}
 function respawn() { me.x = me.ck.x; me.z = me.ck.z; me.y = (me.ck.y || 0) + .05; me.vx = me.vz = me.vy = 0; me.inv = 1.4; me.stun = .3; me.plat = null; }
 
 /* ---------------- avatars ---------------- */
@@ -388,7 +430,7 @@ function showEndButtons() { const h = isHost(); ['retryBtn', 'overLobbyBtn', 'ne
 const ray = new THREE.Raycaster(); ray.far = 2.8; const center = new THREE.Vector2(0, 0);
 let focus = null;
 function findFocus() {
-  focus = null; if (!inGame() || me.eaten || me.jailed || app.scare || app.S.phase !== 'play') return;
+  focus = null; if (!inGame() || me.eaten || me.jailed || app.scare || app.jump || app.S.phase !== 'play') return;
   ray.setFromCamera(center, camera);
   // only test what's within reach, so huge rooms stay fast
   const near = world.root.children.filter(o => { const dx = o.position.x - me.x, dz = o.position.z - me.z; if (dx * dx + dz * dz < 30) return true; const g = o.geometry; if (!g) return false; if (!g.boundingSphere) g.computeBoundingSphere(); return g.boundingSphere.radius > 3; });
@@ -420,7 +462,7 @@ function updateInteract(dt) {
 
 /* ---------------- local player ---------------- */
 function updateMe(dt) {
-  const S = app.S; const frozen = app.padOpen || app.chatting || !!S.screen || S.phase === 'clear' || !!app.scare || document.pointerLockElement !== canvas;
+  const S = app.S; const frozen = app.padOpen || app.chatting || !!S.screen || S.phase === 'clear' || !!app.scare || !!app.jump || document.pointerLockElement !== canvas;
   const pt = (net.now() - app.cfg.startAt) / 1000;
   if (me.plat && me.plat.pos) { const a = me.plat.pos(pt - dt), b = me.plat.pos(pt); me.x += b.x - a.x; me.z += b.z - a.z; me.y += b.y - a.y; }
   me.stun = Math.max(0, me.stun - dt); me.inv = Math.max(0, me.inv - dt);
@@ -493,15 +535,23 @@ function frame() {
     if (S.sentries) {
       let best = 1e9, bi = -1;
       S.sentries.forEach((s, i) => { const V = app.sentries[i]; if (!V) return; animSentry(V, s, dt, t); V.g.visible = S.phase !== 'monster' || true; const d = Math.hypot(s.x - me.x, s.z - me.z); if (d < best) { best = d; bi = i; } if (s.st === 'hunt' && app.prevSt[i] !== 'hunt' && d < 12 && app.fresh) SFX.screech(); app.prevSt[i] = s.st; });
+      app.growlT -= dt; if (bi >= 0 && S.sentries[bi].st === 'hunt' && best < 12 && app.growlT <= 0) { app.growlT = 1.6 + Math.random() * 2; SFX.growl(1 - best / 12); }
       app.clickT -= dt;
-      if (bi >= 0 && best < 15 && app.clickT <= 0 && !me.eaten) { const s = S.sentries[bi]; app.clickT = s.st === 'hunt' ? .14 + Math.random() * .1 : .5 + best * .06 + Math.random() * .4; const ang = Math.atan2(s.x - me.x, s.z - me.z) - (me.yaw + Math.PI); click((1 - best / 15) * .22, -Math.sin(ang)); }
+      if (bi >= 0 && best < 15 && app.clickT <= 0 && !me.eaten && !app.jump) { const s = S.sentries[bi]; app.clickT = s.st === 'hunt' ? .14 + Math.random() * .1 : .5 + best * .06 + Math.random() * .4; const ang = Math.atan2(s.x - me.x, s.z - me.z) - (me.yaw + Math.PI); click((1 - best / 15) * .22, -Math.sin(ang)); }
     }
+    // creepy bed: louder as the nearest monster closes in; breathing near hidden ones
+    { let ds = nearestSentry(me.x, me.z), dl = 1e9; (app.A.lurkers || []).forEach((l, i) => { if (!(S.lurk || {})[i]) dl = Math.min(dl, Math.hypot(l.x - me.x, l.z - me.z)); });
+      const I = me.eaten ? 0 : S.phase === 'monster' ? .9 : clamp(1 - ds / 16, 0, 1), B = me.eaten ? 0 : clamp(1 - dl / 7, 0, 1); creepUpdate(dt, I, B); }
     // jail
     const J = S.jailed || {};
     if (S.caught && S.caught.length) { const c = S.caught[S.caught.length - 1]; if (c.at !== app.lastCaught) { app.lastCaught = c.at; if (app.fresh) { if (c.id === app.me.id) { app.scare = { at: performance.now(), by: c.by }; SFX.screech(); hurt(); $('notecard').hidden = true; } else toast(`A sentry dragged ${nameOf(c.id)} off to the jail!`); } } }
     if (S.freedAt && S.freedAt !== app.lastFreed) { app.lastFreed = S.freedAt; if (app.fresh) { SFX.unlock(); toast(`${nameOf(S.freedBy)} picked the jail lock!`); } }
     if (me.jailed && !J[app.me.id]) { me.jailed = false; const o = app.A.jail.out; me.x = o.x + (Math.random() - .5) * 2; me.z = o.z + Math.random() * .6; }
-    if (me.eaten) spectate(dt); else if (app.scare) scareCam(dt); else updateMe(dt);
+    // ambush monsters hidden in the dark
+    if (S.lurk) for (const i in S.lurk) { if (app.lurkSeen[i]) continue; app.lurkSeen[i] = 1; const L = S.lurk[i], V = app.lurkV[i], l = app.A.lurkers[i]; if (!V || !app.fresh) continue;
+      if (L.by === app.me.id) startJump(V, false); else { const dd = Math.hypot(l.x - me.x, l.z - me.z); if (dd < 25) SFX.scream(Math.max(.15, 1 - dd / 25) * .7); V.g.visible = true; V.leap = performance.now(); V.leapTo = (app.roster.get(L.by) || {}).pos; } }
+    app.lurkV.forEach(V => { if (!V.leap || app.jump?.V === V) return; const e = (performance.now() - V.leap) / 1000; if (e > 2) { V.g.visible = false; V.leap = 0; return; } if (V.leapTo) { V.g.position.x = lerp(V.g.position.x, V.leapTo.x, Math.min(1, dt * 6)); V.g.position.z = lerp(V.g.position.z, V.leapTo.z, Math.min(1, dt * 6)); V.g.position.y = Math.sin(Math.min(1, e * 2) * Math.PI) * .6; } poseCreature(V, 0, 'scream', dt, t); });
+    if (me.eaten) spectate(dt); else if (app.jump) jumpCam(dt, t); else if (app.scare) scareCam(dt); else updateMe(dt);
     world.update(dt, t, S.phase === 'monster');
     A.render(dt, S, { now, me, fx, fresh: app.fresh, phase: S.phase, exitText }); app.fresh = true;
     if (!me.eaten) updateInteract(dt); else { $('prompt').hidden = true; $('ring').hidden = true; }
@@ -550,8 +600,9 @@ function renderRoster() {
 // A little monster idling behind the home and lobby screens.
 let menuM = null;
 function menuScene(dt, t) {
-  if (!menuM) { world.clear(); darkness(false); const f = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshToonMaterial({ color: 0x2a2236 })); f.rotation.x = -Math.PI / 2; world.root.add(f); world.torch(-3, -2, Math.PI / 4, 10); world.torch(3, -2, -Math.PI / 4, 10); menuM = makeMonster(world.root); menuM.g.position.x = 1.5; }
+  if (!menuM) { world.clear(); darkness(false); const f = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshToonMaterial({ color: 0x2a2236 })); f.rotation.x = -Math.PI / 2; world.root.add(f); world.torch(-3, -2, Math.PI / 4, 10); world.torch(3, -2, -Math.PI / 4, 10); menuM = makeMonster(world.root); menuM.g.position.x = 1.5; menuM.crew = CREATURE_KINDS.map((k, i) => { const V = makeCreature(world.root, k); V.g.position.set(-2.6 + i * 1.5, 0, 1.2 + (i % 2) * .6); V.g.rotation.y = .3 - i * .2; return V; }); }
   if (!menuM.g.parent || menuM.g.parent !== world.root) { menuM = null; return; }
+  (menuM.crew || []).forEach((V, i) => poseCreature(V, 0, Math.sin(t * .7 + i * 2) > .6 ? 'hunt' : 'calm', dt, t));
   animMonster(menuM, { x: 1.5, z: 0, face: Math.sin(t * .4) * .5, open: .25 + Math.max(0, Math.sin(t * 1.3)) * .6, chew: 0, moving: false }, dt, t);
   world.update(dt, t, false);
 }
