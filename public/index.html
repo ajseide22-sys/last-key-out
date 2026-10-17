@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Last Key Out</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=Rubik:wght@400;500;700&display=swap">
+<style>
+:root{
+  --ink:#0d0b14; --panel:#17131f; --panel-2:#211a2d; --line:#342a44;
+  --text:#f1e8da; --muted:#a397ae; --ember:#ffb347; --ember-deep:#e0761f; --danger:#ff4d5e; --ok:#7dffc4;
+  --display:'Bungee','Arial Black',Impact,sans-serif; --body:'Rubik',system-ui,-apple-system,'Segoe UI',sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--ink);color:var(--text);overflow:hidden;font-family:var(--body);font-size:15px}
+[hidden]{display:none!important}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+#stage{position:fixed;inset:0;width:100%;height:100%;display:block}
+
+/* screens */
+.screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:flex-start;overflow-y:auto;padding:24px max(16px,4vw);background:linear-gradient(90deg,rgba(13,11,20,.94) 0%,rgba(13,11,20,.75) 45%,rgba(13,11,20,.1) 80%)}
+.screen.center{justify-content:center;background:rgba(8,6,12,.78)}
+.card{width:100%;max-width:480px;display:flex;flex-direction:column;gap:14px;margin-block:auto}
+.screen.center .card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:28px;max-width:460px}
+.eyebrow{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+h1{font-family:var(--display);font-weight:400;font-size:clamp(48px,9vw,84px);line-height:.92;margin:0;color:var(--ember);text-shadow:0 5px 0 #4a2208,0 0 50px rgba(255,140,40,.35)}
+h1 span{color:var(--text);text-shadow:0 5px 0 #000}
+h2{font-family:var(--display);font-weight:400;font-size:clamp(30px,5vw,42px);line-height:1;margin:0}
+.lede{margin:0;line-height:1.55;opacity:.9}
+.label{font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-top:4px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.row>*{min-width:0}
+input[type=text]{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;width:100%}
+input.code{text-transform:uppercase;letter-spacing:.3em;font-family:var(--display);width:9.5em;text-align:center}
+.primary{background:linear-gradient(180deg,var(--ember),var(--ember-deep));color:#2a1204;border:0;border-radius:14px;padding:14px 20px;font-family:var(--display);font-size:18px;box-shadow:0 5px 0 #6b2f08,0 10px 30px rgba(255,140,40,.2);transition:transform .08s}
+.primary:active{transform:translateY(3px);box-shadow:0 2px 0 #6b2f08}
+.primary:disabled{filter:grayscale(.8);opacity:.6;cursor:default}
+.ghost{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 16px;font-weight:500}
+.ghost.on{border-color:var(--ok);color:var(--ok)}
+.fine{font-size:12.5px;color:var(--muted);margin:0;line-height:1.5}
+.err{color:var(--danger);font-size:13px;margin:0}
+.diffs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.diffs button{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;text-align:left;display:flex;flex-direction:column;gap:3px;min-width:0}
+.diffs .dn{font-family:var(--display);font-size:14px}
+.diffs .dt{font-family:var(--display);font-size:22px;color:var(--ember);font-variant-numeric:tabular-nums}
+.diffs .db{font-size:11.5px;color:var(--muted);line-height:1.3}
+.diffs button[aria-pressed="true"]{border-color:var(--ember);background:var(--panel-2);box-shadow:inset 0 0 0 1px var(--ember)}
+.diffs button[data-d="impossible"] .dt{color:var(--danger)}
+.diffs button:disabled{cursor:default}
+.roomcode{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.roomcode b{font-family:var(--display);font-size:40px;letter-spacing:.12em;color:var(--ember)}
+.plist{display:flex;flex-direction:column;gap:6px}
+.pl{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 12px}
+.pl .dot{width:14px;height:14px;border-radius:50%;flex:none}
+.pl .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.pl .tag{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.pl .tag.host{color:var(--ember)}
+.pl.talk{border-color:var(--ok)}
+.meter{height:6px;border-radius:3px;background:var(--panel-2);overflow:hidden;flex:1;min-width:80px}
+.meter i{display:block;height:100%;width:0;background:var(--ok);transition:width .05s}
+.keys{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px}
+.keys b{font-family:var(--display);font-weight:400;font-size:12px;color:var(--ember)}
+
+/* HUD */
+#hud{position:fixed;inset:0;pointer-events:none;padding:12px 16px;display:flex;flex-direction:column}
+.hud-top{display:grid;grid-template-columns:1fr auto 1fr;align-items:start;gap:12px}
+.chip{font-family:var(--display);font-size:12px;letter-spacing:.08em;color:var(--ember);text-transform:uppercase}
+.area{font-weight:700;font-size:18px;text-shadow:0 2px 8px #000}
+.timer{font-family:var(--display);font-size:42px;line-height:1;font-variant-numeric:tabular-nums;text-shadow:0 3px 0 #000,0 0 24px rgba(255,179,71,.35)}
+.timer.warn{color:var(--ember)}
+.timer.danger{color:var(--danger);animation:pulse .5s ease-in-out infinite alternate}
+@keyframes pulse{to{transform:scale(1.08)}}
+.hud-r{justify-self:end;text-align:right}
+.prog{font-family:var(--display);font-size:20px;text-shadow:0 2px 8px #000;font-variant-numeric:tabular-nums}
+.obj{align-self:center;margin-top:8px;background:rgba(13,11,20,.7);border:1px solid var(--line);padding:6px 14px;border-radius:999px;font-size:14px;max-width:min(92vw,620px);text-align:center}
+#cross{position:fixed;left:50%;top:50%;width:6px;height:6px;margin:-3px;border-radius:50%;background:var(--text);box-shadow:0 0 0 2px rgba(0,0,0,.6);pointer-events:none}
+#cross.hot{background:var(--ember);width:10px;height:10px;margin:-5px}
+#ring{position:fixed;left:50%;top:50%;width:54px;height:54px;margin:-27px;pointer-events:none;transform:rotate(-90deg)}
+#ring circle{fill:none;stroke:var(--ember);stroke-width:5;stroke-linecap:round}
+#prompt{position:fixed;left:50%;top:calc(50% + 38px);transform:translateX(-50%);background:rgba(13,11,20,.85);border:1px solid var(--line);border-radius:10px;padding:6px 12px;font-weight:500;white-space:nowrap;pointer-events:none}
+#prompt b{font-family:var(--display);font-weight:400;color:var(--ember);margin-right:6px}
+#prompt.dim{color:var(--muted)}
+.hud-bottom{margin-top:auto;display:flex;justify-content:space-between;align-items:flex-end;gap:16px}
+#chatlog{display:flex;flex-direction:column;gap:4px;max-width:min(60vw,420px);font-size:13.5px}
+#chatlog div{background:rgba(13,11,20,.7);border-radius:8px;padding:4px 10px;animation:fadeout 9s forwards}
+#chatlog b{margin-right:6px}
+@keyframes fadeout{0%,80%{opacity:1}100%{opacity:0}}
+#chatbox{pointer-events:auto;width:min(60vw,420px)}
+.mic{display:flex;align-items:center;gap:8px;background:rgba(13,11,20,.7);border:1px solid var(--line);border-radius:10px;padding:6px 10px;font-size:12.5px}
+.mic .meter{min-width:60px}
+#roster{display:flex;flex-direction:column;gap:4px;align-items:flex-end}
+.rp{display:flex;align-items:center;gap:8px;background:rgba(13,11,20,.7);border:1px solid var(--line);border-radius:8px;padding:4px 10px;font-size:12.5px}
+.rp .dot{width:10px;height:10px;border-radius:50%}
+.rp.talk{border-color:var(--ok)}
+.rp.out{opacity:.45;text-decoration:line-through}
+#stam{position:fixed;left:50%;bottom:22px;width:160px;height:5px;margin-left:-80px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden}
+#stam i{display:block;height:100%;background:var(--ok)}
+#banner{position:fixed;left:0;right:0;top:30%;text-align:center;pointer-events:none;opacity:0;transition:opacity .35s,transform .35s;transform:translateY(10px);padding:0 16px}
+#banner.show{opacity:1;transform:none}
+#banner .b1{font-family:var(--display);color:var(--ember);font-size:15px;letter-spacing:.14em;text-transform:uppercase;text-shadow:0 2px 0 #000}
+#banner .b2{font-family:var(--display);font-size:clamp(30px,6vw,64px);line-height:1.05;text-shadow:0 4px 0 #000,0 0 40px rgba(0,0,0,.8)}
+#banner.red .b2{color:var(--danger)}
+#toast{position:fixed;left:50%;top:126px;transform:translate(-50%,-6px);background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:8px 14px;font-weight:500;opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;max-width:90vw;text-align:center}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+#notecard{position:fixed;right:16px;top:120px;background:#f3e3c3;color:#2a1a10;border-radius:6px;padding:14px 18px;transform:rotate(2deg);box-shadow:0 10px 30px rgba(0,0,0,.5);pointer-events:none;max-width:240px}
+#notecard b{font-family:var(--display);font-weight:400;font-size:30px;letter-spacing:.2em;display:block}
+#notecard span{font-size:12.5px}
+#redwash{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 40%,rgba(255,30,50,.45));opacity:0;transition:opacity .4s}
+#redwash.on{opacity:1}
+#hurt{position:fixed;inset:0;pointer-events:none;background:rgba(255,40,60,.35);opacity:0;transition:opacity .3s}
+#chomp{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;background:radial-gradient(circle,rgba(120,0,20,.6),rgba(0,0,0,.95));font-family:var(--display);font-size:clamp(60px,14vw,160px);color:var(--danger);text-shadow:0 8px 0 #000}
+#spec{position:fixed;left:50%;bottom:48px;transform:translateX(-50%);background:rgba(13,11,20,.8);border:1px solid var(--line);border-radius:10px;padding:8px 14px;font-size:13px;pointer-events:none;text-align:center}
+#lockhint{position:fixed;left:50%;top:58%;transform:translateX(-50%);background:rgba(13,11,20,.85);border:1px solid var(--line);border-radius:10px;padding:10px 16px;pointer-events:none}
+#fade{position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity .35s}
+#fade.on{opacity:1}
+#tags{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+.ntag{position:absolute;transform:translate(-50%,-100%);font-size:12px;font-weight:700;white-space:nowrap;text-shadow:0 1px 3px #000;display:flex;flex-direction:column;align-items:center;gap:2px}
+.ntag .bub{background:rgba(243,227,195,.95);color:#2a1a10;font-weight:500;border-radius:10px;padding:3px 8px;max-width:220px;white-space:normal;text-align:center}
+.ntag .spk{font-size:11px;color:var(--ok)}
+/* keypad */
+.pad{display:grid;grid-template-columns:repeat(3,64px);gap:8px;justify-content:center}
+.pad button{height:56px;border-radius:12px;background:var(--panel-2);border:1px solid var(--line);font-family:var(--display);font-size:20px}
+#padShow{font-family:var(--display);font-size:38px;letter-spacing:.3em;text-align:center;color:var(--ok);background:#0a1410;border-radius:10px;padding:10px;min-height:64px}
+.slider{display:flex;align-items:center;gap:12px}
+.slider label{width:120px;font-size:13px;color:var(--muted)}
+.slider input{flex:1}
+@media (max-width:640px){.timer{font-size:32px}.area{font-size:14px}.screen{background:rgba(13,11,20,.86)}.diffs{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){.timer.danger{animation:none}#chatlog div{animation:none}}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="tags"></div>
+
+<!-- HOME -->
+<div id="home" class="screen">
+  <div class="card">
+    <div class="eyebrow">First-person online co-op · 1 to 8 players · proximity voice</div>
+    <h1>Last Key <span>Out</span></h1>
+    <p class="lede">You and your crew wake up locked in a haunted manor. Search every shelf, drawer and teapot for the keys, then fight through three more rooms before the clock runs out. Stay close to hear each other. When time's up, something hungry comes through the wall.</p>
+    <div class="label">Your name</div>
+    <input type="text" id="nameIn" maxlength="16" placeholder="Name your character" autocomplete="nickname">
+    <div class="label">Play</div>
+    <button class="primary" id="createBtn">Create a room</button>
+    <div class="row"><input type="text" id="codeIn" class="code" maxlength="4" placeholder="CODE" autocomplete="off"><button class="ghost" id="joinBtn">Join room</button></div>
+    <p class="err" id="homeErr" hidden></p>
+    <p class="fine">Share the room link or the 4-letter code with friends. Voice chat needs a microphone and an https:// address.</p>
+  </div>
+</div>
+
+<!-- LOBBY -->
+<div id="lobby" class="screen" hidden>
+  <div class="card">
+    <div class="eyebrow">Lobby</div>
+    <div class="roomcode"><b id="roomCode">----</b><button class="ghost" id="copyBtn">Copy invite link</button></div>
+    <p class="fine" id="inviteText"></p>
+    <div class="label">Crew</div>
+    <div id="lobbyList" class="plist"></div>
+    <div class="label">Voice</div>
+    <div class="row" style="align-items:center"><button class="ghost" id="micBtn">Turn on microphone</button><div class="meter"><i id="lobbyMeter"></i></div></div>
+    <p class="err" id="micErr" hidden></p>
+    <div class="label" id="diffLabel">Difficulty · time per room</div>
+    <div id="diffs" class="diffs"></div>
+    <button class="primary" id="startBtn">Start level 1</button>
+    <p class="fine" id="startNote"></p>
+    <div class="label">Controls</div>
+    <div class="keys"><b>Mouse</b><span>Look around (click the game to lock the mouse)</span><b>WASD</b><span>Move · Shift to sprint</span><b>Space</b><span>Jump</span><b>C / Ctrl</b><span>Crouch</span><b>E</b><span>Hold to search · press for doors</span><b>F</b><span>Flashlight</span><b>M</b><span>Mute your mic</span><b>T</b><span>Proximity text chat</span><b>Esc</b><span>Menu</span></div>
+    <button class="ghost" id="leaveLobby">Leave room</button>
+  </div>
+</div>
+
+<!-- HUD -->
+<div id="hud" hidden>
+  <div class="hud-top">
+    <div><div id="hLevel" class="chip"></div><div id="hArea" class="area"></div></div>
+    <div id="hTimer" class="timer">10:00</div>
+    <div class="hud-r"><div id="hProg" class="prog"></div></div>
+  </div>
+  <div id="hObj" class="obj"></div>
+  <div class="hud-bottom">
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <div id="chatlog"></div>
+      <input type="text" id="chatbox" maxlength="140" placeholder="Say something to players nearby…" hidden>
+      <div class="mic"><span id="micState">Mic off</span><div class="meter"><i id="hudMeter"></i></div></div>
+    </div>
+    <div id="roster"></div>
+  </div>
+</div>
+<div id="cross" hidden></div>
+<svg id="ring" viewBox="0 0 54 54" hidden><circle cx="27" cy="27" r="22" id="ringC" stroke-dasharray="138.2" stroke-dashoffset="138.2"/></svg>
+<div id="prompt" hidden></div>
+<div id="stam" hidden><i id="stamI"></i></div>
+<div id="lockhint" hidden>Click to look around</div>
+<div id="spec" hidden></div>
+<div id="notecard" hidden><span>A crumpled note says:</span><b id="noteCode"></b><span>Only you can see this. Tell your crew!</span></div>
+<div id="banner"><div class="b1" id="bn1"></div><div class="b2" id="bn2"></div></div>
+<div id="toast"></div>
+<div id="redwash"></div>
+<div id="hurt"></div>
+<div id="chomp" hidden>CHOMP</div>
+
+<!-- ESC MENU -->
+<div id="menu" class="screen center" hidden>
+  <div class="card">
+    <h2>Menu</h2>
+    <p class="fine">The game keeps running while this is open.</p>
+    <button class="primary" id="resumeBtn">Back to the game</button>
+    <div class="row"><button class="ghost" id="menuMic">Turn on microphone</button><button class="ghost" id="menuMute">Mute mic (M)</button></div>
+    <div class="slider"><label for="sVol">Voice volume</label><input type="range" id="sVol" min="0" max="2" step=".05" value="1"></div>
+    <div class="slider"><label for="sBright">Brightness</label><input type="range" id="sBright" min=".6" max="2.4" step=".05" value="1.3"></div>
+    <div class="slider"><label for="sSens">Mouse speed</label><input type="range" id="sSens" min=".3" max="2.5" step=".05" value="1"></div>
+    <button class="ghost" id="hostLobbyBtn" hidden>End game and return everyone to the lobby</button>
+    <button class="ghost" id="leaveBtn">Leave room</button>
+  </div>
+</div>
+
+<!-- SAFE KEYPAD -->
+<div id="keypad" class="screen center" hidden>
+  <div class="card" style="align-items:stretch">
+    <h2>Safe</h2>
+    <p class="fine" id="padHint">Type the code with the number keys, then press Enter.</p>
+    <div id="padShow"></div>
+    <div class="pad" id="padKeys"></div>
+    <div class="row" style="justify-content:center"><button class="primary" id="padGo">Open</button><button class="ghost" id="padClose">Cancel</button></div>
+  </div>
+</div>
+
+<!-- END SCREENS -->
+<div id="over" class="screen center" hidden>
+  <div class="card">
+    <div class="eyebrow" id="overEyebrow"></div>
+    <h2 style="color:var(--danger)">Gobbled.</h2>
+    <p class="lede" id="overText"></p>
+    <button class="primary" id="retryBtn">Retry this room</button>
+    <button class="ghost" id="overLobbyBtn">Back to the lobby</button>
+    <p class="fine" id="overWait">Waiting for the host to choose.</p>
+  </div>
+</div>
+<div id="done" class="screen center" hidden>
+  <div class="card">
+    <div class="eyebrow">You made it out</div>
+    <h2 id="doneTitle"></h2>
+    <p class="lede" id="doneText"></p>
+    <button class="primary" id="nextBtn">Next level</button>
+    <button class="ghost" id="doneLobbyBtn">Back to the lobby</button>
+    <p class="fine" id="doneWait">Waiting for the host to choose.</p>
+  </div>
+</div>
+<div id="fade"></div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
