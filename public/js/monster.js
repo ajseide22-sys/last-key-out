@@ -39,7 +39,8 @@ export function animMonster(M, m, dt, t) {
   M.arms[0].rotation.z = -.25; M.arms[1].rotation.z = .25;
   const open = m.chew > 0 ? .15 + Math.abs(Math.sin(t * 18)) * .35 : m.open;
   M.pvU.rotation.x = -open * .9; M.pvL.rotation.x = open * .45;
-  M.g.position.set(M.rx, m.moving ? Math.abs(s) * .15 : Math.sin(t * 2) * .05, M.rz); M.g.rotation.y = M.rf;
+  M.ry = (M.ry ?? (m.y || 0)) + ((m.y || 0) - (M.ry ?? 0)) * k;
+  M.g.position.set(M.rx, M.ry + (m.moving ? Math.abs(s) * .15 : Math.sin(t * 2) * .05), M.rz); M.g.rotation.y = M.rf;
 }
 
 // Host-side chase step. Mutates m and returns the id of a player it just ate, if any.
@@ -53,7 +54,8 @@ export function stepMonster(m, dt, players, elapsed) {
   m.moving = d > 2;
   if (m.moving) { m.x += dx / d * sp * dt; m.z += dz / d * sp * dt; }
   m.face = Math.atan2(dx, dz);
+  m.y = (m.y || 0) + (Math.max(0, (tgt.y || 0) - 1) - (m.y || 0)) * Math.min(1, dt * 3); // climbs up to players on platforms
   m.open = d < 6 ? 1 : .4;
-  if (d < 2.2) { m.chew = .8; return tgt.id; }
+  if (d < 2.2 && Math.abs((tgt.y || 0) - 1 - (m.y || 0)) < 2.5) { m.chew = .8; return tgt.id; }
   return null;
 }

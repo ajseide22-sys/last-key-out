@@ -57,7 +57,7 @@ export class World {
   // A rectangular room: entry gap in the south wall (+z), locked door in the north wall (−z) leading to an exit corridor.
   room(W, D, o) {
     const T = .4, H = o.height || 3.6, gap = 2.6;
-    this.floor(W, D, o.floor);
+    const floorMesh = this.floor(W, D, o.floor);
     const ceil = new THREE.Mesh(new THREE.PlaneGeometry(W + 1, D + 1), new THREE.MeshToonMaterial({ color: o.ceil || 0x1d1626 })); ceil.rotation.x = Math.PI / 2; ceil.position.y = H; this.root.add(ceil);
     const wm = new THREE.MeshToonMaterial({ map: this.tex(o.wall, W / 3.5, 1) }), wmS = new THREE.MeshToonMaterial({ map: this.tex(o.wall, D / 3.5, 1) });
     const trim = toon(o.trim || P.woodDark);
@@ -83,7 +83,7 @@ export class World {
     const lockM = new THREE.MeshBasicMaterial({ color: 0xff3344 }); const lock = new THREE.Mesh(new THREE.BoxGeometry(.3, .4, .12), lockM); lock.position.set(.6, 0, .17); door.add(lock);
     const lampM = new THREE.MeshBasicMaterial({ color: 0xff3344 }); const lamp = new THREE.Mesh(new THREE.SphereGeometry(.16, 12, 8), lampM); lamp.position.set(0, 2.85, -D / 2 + .05); this.root.add(lamp);
     const room = {
-      W, D, H, door, opened: false, exitZone: { x0: -gap / 2, x1: gap / 2, z0: -D / 2 - T - CD, z1: -D / 2 - T - .3 },
+      W, D, H, door, floorMesh, opened: false, exitZone: { x0: -gap / 2, x1: gap / 2, z0: -D / 2 - T - CD, z1: -D / 2 - T - .3 },
       smash: () => { board.visible = false; },
       open: () => { if (room.opened) return; room.opened = true; door.userData.solid.on = false; lampM.color.set(0x7dffc4); lockM.color.set(0x7dffc4); this.anim(.9, k => { door.position.y = 1.3 + k * 2.9; cl.intensity = k * 8; }); }
     };

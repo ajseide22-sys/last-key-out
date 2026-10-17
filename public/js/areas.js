@@ -1,15 +1,17 @@
-// The four areas of a level. Every client builds the same layout from cfg.seed; the host runs the rules.
+// The two rooms of a level. Every client builds the same layout from cfg.seed; the host runs the rules.
 // Shared state S is owned by the host and mirrored to everyone in snapshots.
 import * as THREE from 'three';
 import { PROPS, WALL_TYPES, FLOOR_TYPES, makeKey, toon, P, outline } from './props.js';
 import { mulberry, shuffle, clamp, lerp, TEX } from './world.js';
+import { buildNav, stepSentries } from './sentry.js';
 
 export const DIFF = {
-  easy: { label: 'Easy', time: 600, blurb: 'Plenty of time to search', search: .5, fakes: 0, trap: 0, linger: 6, speed: 1, seq: 4, step: .9, runes: 6, torches: 1, replayPen: 0, digits: 3 },
-  hard: { label: 'Hard', time: 300, blurb: 'Fake keys, darker rooms', search: .9, fakes: 2, trap: .15, linger: 3.8, speed: 1.35, seq: 6, step: .7, runes: 7, torches: .65, replayPen: 5, digits: 4 },
-  impossible: { label: 'Impossible', time: 120, blurb: 'Two minutes. Good luck.', search: 1.3, fakes: 4, trap: .25, linger: 2.8, speed: 1.7, seq: 7, step: .55, runes: 8, torches: .4, replayPen: 10, digits: 4 },
+  easy: { label: 'Easy', time: 600, blurb: 'Slow sentries, short course', search: .5, fakes: 0, trap: 0, digits: 3, sentries: 2, sSpeed: 2.7, sense: 7, beam: 16, pick: 2, course: 16, cMul: 1, blink: false },
+  hard: { label: 'Hard', time: 300, blurb: 'More sentries, fake keys', search: .9, fakes: 2, trap: .15, digits: 4, sentries: 4, sSpeed: 3.3, sense: 10, beam: 19, pick: 3, course: 22, cMul: 1.3, blink: true },
+  impossible: { label: 'Impossible', time: 120, blurb: 'Two minutes. Good luck.', search: 1.3, fakes: 4, trap: .25, digits: 4, sentries: 6, sSpeed: 3.9, sense: 13, beam: 22, pick: 4, course: 28, cMul: 1.6, blink: true },
 };
-export const AREA_NAMES = ['The Locked Manor', 'The Pressure Hall', 'The Grinder', 'The Rune Vault'];
+export const AREA_NAMES = ['The Locked Study', 'The Grinder'];
+export const ROOMS = 2;
 
 function placeProp(world, A, type, rng, x, z, rotY, searchable = true, wallN) {
   const pr = PROPS[type](rng);
@@ -20,60 +22,82 @@ function placeProp(world, A, type, rng, x, z, rotY, searchable = true, wallN) {
   if (pr.tick) world.tickers.push({ tick: pr.tick });
   if (!searchable) return pr;
   const pid = 'q' + A.props.size; pr.pid = pid; pr.x = x; pr.z = z; pr.type = type;
-  pr.g.traverse(o => { if (o.isMesh && !o.userData.ink) { o.userData.pid = pid; world.hit.push(o); } });
+  pr.g.traverse(o => { if (o.isMesh && !o.userData.ink) o.userData.pid = pid; });
   A.props.set(pid, pr); return pr;
 }
-function spawns(D, n) { const a = []; const cols = Math.min(n, 4); for (let i = 0; i < n; i++) { const r = Math.floor(i / 4), c = i % 4; a.push({ x: (c - (Math.min(n - r * 4, 4) - 1) / 2) * 1.3, z: D / 2 - 1.5 - r * 1.3 }); } return a; }
-function tag(world, mesh, pid) { mesh.traverse(o => { if (o.isMesh && !o.userData.ink) { o.userData.pid = pid; world.hit.push(o); } }); }
+function spawns(D, n, y = 0, z0) { const a = []; for (let i = 0; i < n; i++) { const r = Math.floor(i / 4), c = i % 4; a.push({ x: (c - (Math.min(n - r * 4, 4) - 1) / 2) * 1.3, z: (z0 ?? D / 2 - 1.5) - r * 1.3, y }); } return a; }
+function tag(mesh, pid) { mesh.traverse(o => { if (o.isMesh && !o.userData.ink) o.userData.pid = pid; }); }
+const segDist = (px, pz, a) => { const dx = a.bx - a.ax, dz = a.bz - a.az, L2 = dx * dx + dz * dz || 1; const t = clamp(((px - a.ax) * dx + (pz - a.az) * dz) / L2, 0, 1); return Math.hypot(px - (a.ax + dx * t), pz - (a.az + dz * t)); };
 
-/* =================================================================== AREA 1: THE LOCKED MANOR */
-function buildManor(world, cfg) {
+/* =================================================================== ROOM 1: THE LOCKED STUDY */
+function buildStudy(world, cfg) {
   const rng = mulberry(cfg.seed), d = DIFF[cfg.diff], n = cfg.n;
-  const W = Math.min(22 + 4 * (n - 1), 44), D = Math.min(16 + 3 * (n - 1), 34);
-  const theme = [['#5b2a3a', '#4a2030', 26], ['#2a4a5b', '#203c4a', 30], ['#3a4a2a', '#2e3c20', 22]][(cfg.level - 1) % 3];
+  const W = Math.min(36 + 5 * (n - 1), 62), D = Math.min(28 + 3 * (n - 1), 48);
+  const theme = [['#4a2232', '#3a1a28', 26], ['#223a4a', '#1a2e3a', 30], ['#2e3a22', '#24301a', 22]][(cfg.level - 1) % 3];
   const room = world.room(W, D, { floor: world.tex(TEX.wood(theme[2]), W / 4, D / 4, rng), wall: TEX.wallpaper(theme[0], theme[1]), height: 3.6 });
-  const A = { name: AREA_NAMES[0], W, D, room, props: new Map(), spawn: spawns(D, n) };
-  // interior walls split the manor into wings, so you lose sight (and earshot) of each other
+  const A = { name: AREA_NAMES[0], W, D, room, props: new Map(), spawn: spawns(D, n), kind: 'study' };
   const wm = new THREE.MeshToonMaterial({ map: world.tex(TEX.wallpaper(theme[0], theme[1]), 2, 1) });
-  const zD = -D / 2 + D * .42, T = .3, gaps = W >= 30 ? [-W * .3, 0, W * .3] : [-W * .28, W * .28], gw = 2.4;
-  const segs = []; let x0 = -W / 2;
-  gaps.concat([W / 2 + gw / 2]).forEach(g => { const a = x0, b = g - gw / 2; if (b - a > .2) { world.box(b - a, 3.6, T, wm, (a + b) / 2, 1.8, zD, true, true, true); segs.push({ a, b }); } x0 = g + gw / 2; });
-  const vdiv = []; if (W >= 26) [-1, 1].forEach(s => { const x = s * W / 4, z0 = zD + T / 2, z1 = zD + (D / 2 - zD) * .5; world.box(T, 3.6, z1 - z0, wm, x, 1.8, (z0 + z1) / 2, true, true, true); vdiv.push({ x, z0, z1 }); });
-  // wall slots for wall props
+
+  // wings: a grid of rooms joined by doorways (some walls left open)
+  const cols = Math.max(3, Math.round(W / 12)), rows = Math.max(3, Math.round(D / 10)), T = .3, gw = 2.4;
+  const xs = Array.from({ length: cols + 1 }, (_, i) => -W / 2 + i * W / cols), zs = Array.from({ length: rows + 1 }, (_, j) => -D / 2 + j * D / rows);
+  const pieces = [], gaps = [];
+  const wallLine = (ax, az, bx, bz) => {
+    const L = Math.hypot(bx - ax, bz - az), horiz = az === bz; const g = 1.6 + gw / 2 + rng() * (L - 3.2 - gw);
+    const parts = [[0, g - gw / 2], [g + gw / 2, L]];
+    if (L > 9 && rng() < .5) { const g2 = g < L / 2 ? g + L / 2.2 : g - L / 2.2; if (g2 > 1.6 + gw / 2 && g2 < L - 1.6 - gw / 2) { parts.splice(0, 2, ...[[0, Math.min(g, g2) - gw / 2], [Math.min(g, g2) + gw / 2, Math.max(g, g2) - gw / 2], [Math.max(g, g2) + gw / 2, L]]); gaps.push(horiz ? { x: ax + g2, z: az } : { x: ax, z: az + g2 }); } }
+    gaps.push(horiz ? { x: ax + g, z: az } : { x: ax, z: az + g });
+    parts.forEach(([s, e]) => { if (e - s < .3) return; if (horiz) { world.box(e - s, 3.6, T, wm, ax + (s + e) / 2, 1.8, az, true, true, true); pieces.push({ ax: ax + s, az, bx: ax + e, bz: az, horiz }); } else { world.box(T, 3.6, e - s, wm, ax, 1.8, az + (s + e) / 2, true, true, true); pieces.push({ ax, az: az + s, bx: ax, bz: az + e, horiz }); } });
+  };
+  for (let i = 1; i < cols; i++) for (let j = 0; j < rows; j++) { if ((j === 0 || j === rows - 1) && Math.abs(xs[i]) < 3.5) continue; if (rng() < .2) continue; wallLine(xs[i], zs[j], xs[i], zs[j + 1]); }
+  for (let j = 1; j < rows; j++) for (let i = 0; i < cols; i++) { if (rng() < .2) continue; wallLine(xs[i], zs[j], xs[i + 1], zs[j]); }
+
+  // the jail: a cage in a wing away from the start
+  const cells = []; for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) { const cx = (xs[i] + xs[i + 1]) / 2, cz = (zs[j] + zs[j + 1]) / 2; if (j === rows - 1 && Math.abs(cx) < W / cols) continue; if (j === 0 && Math.abs(cx) < W / cols) continue; cells.push({ cx, cz }); }
+  const jc = cells[Math.floor(rng() * cells.length)], JS = 4.4;
+  const bar = toon(0x6b6478), frame = toon(0x3a3444);
+  for (const [sx, sz, horiz] of [[0, -JS / 2, 1], [0, JS / 2, 1], [-JS / 2, 0, 0], [JS / 2, 0, 0]]) {
+    for (let k = -JS / 2; k <= JS / 2 + .01; k += .32) { const b = new THREE.Mesh(new THREE.CylinderGeometry(.04, .04, 2.6, 6), bar); b.position.set(jc.cx + (horiz ? k : sx), 1.3, jc.cz + (horiz ? sz : k)); b.castShadow = true; world.root.add(b); }
+    const f = new THREE.Mesh(new THREE.BoxGeometry(horiz ? JS + .1 : .14, .14, horiz ? .14 : JS + .1), frame); f.position.set(jc.cx + sx, 2.6, jc.cz + sz); world.root.add(f);
+    world.solid(jc.cx + sx - (horiz ? JS / 2 : .09), jc.cx + sx + (horiz ? JS / 2 : .09), jc.cz + sz - (horiz ? .09 : JS / 2), jc.cz + sz + (horiz ? .09 : JS / 2), true);
+  }
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(JS, .08, JS), frame); roof.position.set(jc.cx, 2.65, jc.cz); world.root.add(roof);
+  const lockG = new THREE.Group(); lockG.position.set(jc.cx + .9, 1.1, jc.cz + JS / 2 + .12); world.root.add(lockG);
+  const lockBox = new THREE.Mesh(new THREE.BoxGeometry(.4, .5, .14), toon(P.brass)); outline(lockBox, .02); lockG.add(lockBox);
+  const shackle = new THREE.Mesh(new THREE.TorusGeometry(.12, .035, 6, 14, Math.PI), toon(0x9d99ab)); shackle.position.y = .25; lockG.add(shackle);
+  tag(lockG, 'jail');
+  const bulbM = new THREE.MeshBasicMaterial({ color: 0xff2233 }); const bulb = new THREE.Mesh(new THREE.SphereGeometry(.12, 10, 8), bulbM); bulb.position.set(jc.cx, 2.85, jc.cz); world.root.add(bulb);
+  const jl = new THREE.PointLight(0xff2233, 5, 8, 1.6); jl.position.set(jc.cx, 2.5, jc.cz); world.root.add(jl);
+  A.jail = { x: jc.cx, z: jc.cz, spots: [-1.2, 0, 1.2].flatMap(a => [-1.2, 0, 1.2].map(b => ({ x: jc.cx + a, z: jc.cz + b }))), out: { x: jc.cx, z: jc.cz + JS / 2 + 1.2 }, light: jl, bulbM };
+
+  // wall slots for wall props: outer walls and both faces of every interior piece
   const slots = [];
-  const run = (ax, az, bx, bz, nx, nz, avoid) => { const L = Math.hypot(bx - ax, bz - az); for (let t = 1.3; t < L - 1.1; t += 2.3) { const x = ax + (bx - ax) * t / L, z = az + (bz - az) * t / L; if (avoid && avoid(x, z)) continue; slots.push({ x, z, nx, nz }); } };
-  run(-W / 2, -D / 2, W / 2, -D / 2, 0, 1, (x) => Math.abs(x) < 2.5);
-  run(-W / 2, D / 2, W / 2, D / 2, 0, -1, (x) => Math.abs(x) < 3.2);
-  run(-W / 2, -D / 2, -W / 2, D / 2, 1, 0, (x, z) => Math.abs(z - zD) < 1);
-  run(W / 2, -D / 2, W / 2, D / 2, -1, 0, (x, z) => Math.abs(z - zD) < 1);
-  segs.forEach(s => { run(s.a, zD - T / 2, s.b, zD - T / 2, 0, -1); run(s.a, zD + T / 2, s.b, zD + T / 2, 0, 1); });
-  vdiv.forEach(v => { run(v.x - T / 2, v.z0, v.x - T / 2, v.z1, -1, 0); run(v.x + T / 2, v.z0, v.x + T / 2, v.z1, 1, 0); });
+  const nearGap = (x, z, r) => gaps.some(g => Math.hypot(g.x - x, g.z - z) < r);
+  const nearJail = (x, z, r) => Math.abs(x - jc.cx) < JS / 2 + r && Math.abs(z - jc.cz) < JS / 2 + r;
+  const run = (ax, az, bx, bz, nx, nz, avoid) => { const L = Math.hypot(bx - ax, bz - az); for (let t = 1.2; t < L - 1; t += 2.4) { const x = ax + (bx - ax) * t / L, z = az + (bz - az) * t / L; if (avoid && avoid(x, z)) continue; if (nearGap(x, z, 2.2) || nearJail(x, z, 1.4)) continue; if (xs.slice(1, -1).some(v => Math.abs(x - v) < .9 && Math.abs(nz) > .5) || zs.slice(1, -1).some(v => Math.abs(z - v) < .9 && Math.abs(nx) > .5)) continue; slots.push({ x, z, nx, nz }); } };
+  run(-W / 2, -D / 2, W / 2, -D / 2, 0, 1, x => Math.abs(x) < 2.6);
+  run(-W / 2, D / 2, W / 2, D / 2, 0, -1, x => Math.abs(x) < 3.4);
+  run(-W / 2, -D / 2, -W / 2, D / 2, 1, 0); run(W / 2, -D / 2, W / 2, D / 2, -1, 0);
+  pieces.forEach(p => { if (p.horiz) { run(p.ax, p.az - T / 2, p.bx, p.bz - T / 2, 0, -1); run(p.ax, p.az + T / 2, p.bx, p.bz + T / 2, 0, 1); } else { run(p.ax - T / 2, p.az, p.bx - T / 2, p.bz, -1, 0); run(p.ax + T / 2, p.az, p.bx + T / 2, p.bz, 1, 0); } });
   shuffle(slots, rng);
-  const torchN = Math.max(3, Math.round(slots.length * .25 * d.torches));
-  slots.slice(0, torchN).forEach(s => world.torch(s.x + s.nx * .02, s.z + s.nz * .02, Math.atan2(s.nx, s.nz), 6, 2.75));
-  const usable = slots;
-  const wallCount = Math.round(usable.length * .78);
   let safePlaced = false;
-  usable.slice(0, wallCount).forEach((s, i) => {
+  slots.slice(0, Math.round(slots.length * .72)).forEach((s, i) => {
     let type = WALL_TYPES[Math.floor(rng() * WALL_TYPES.length)];
-    if (!safePlaced && i === 3) { type = 'safe'; safePlaced = true; }
+    if (!safePlaced && i === 5) { type = 'safe'; safePlaced = true; }
     const pr = placeProp(world, A, type, rng, s.x, s.z, Math.atan2(s.nx, s.nz), true, [s.nx, s.nz]);
     if (type === 'safe') A.safePid = pr.pid;
   });
   // floor props on a jittered grid
-  const near = (x, z) => (Math.abs(x) < 3.2 && z > D / 2 - 4.2) || (Math.abs(x) < 3.2 && z < -D / 2 + 3.2) || Math.abs(z - zD) < 1.9 || gaps.some(g => Math.abs(x - g) < 2.2 && Math.abs(z - zD) < 3.2) || vdiv.some(v => Math.abs(x - v.x) < 1.8 && z > v.z0 - 1 && z < v.z1 + 1.4);
-  for (let x = -W / 2 + 2.7; x <= W / 2 - 2.7; x += 3.3) for (let z = -D / 2 + 2.7; z <= D / 2 - 2.7; z += 3.3) {
-    const px = x + (rng() - .5) * .6, pz = z + (rng() - .5) * .6; if (near(px, pz) || rng() < .12) continue;
-    const type = FLOOR_TYPES[Math.floor(rng() * FLOOR_TYPES.length)];
-    const rot = Math.floor(rng() * 4) * Math.PI / 2;
-    placeProp(world, A, type, rng, px, pz, rot);
+  const blockedSpot = (x, z) => (Math.abs(x) < 3.4 && z > D / 2 - 4.4) || (Math.abs(x) < 3.4 && z < -D / 2 + 3.4) || pieces.some(p => segDist(x, z, p) < 1.9) || nearGap(x, z, 2.6) || nearJail(x, z, 2.4);
+  for (let x = -W / 2 + 2.7; x <= W / 2 - 2.7; x += 3.7) for (let z = -D / 2 + 2.7; z <= D / 2 - 2.7; z += 3.7) {
+    const px = x + (rng() - .5) * .7, pz = z + (rng() - .5) * .7; if (blockedSpot(px, pz) || rng() < .22) continue;
+    placeProp(world, A, FLOOR_TYPES[Math.floor(rng() * FLOOR_TYPES.length)], rng, px, pz, Math.floor(rng() * 4) * Math.PI / 2);
   }
-  // rugs and chandeliers for life
-  for (let i = 0; i < 3; i++) { const rug = new THREE.Mesh(new THREE.PlaneGeometry(3 + rng() * 2, 2 + rng() * 1.5), toon([P.red, P.purple, P.teal][i])); rug.rotation.x = -Math.PI / 2; rug.position.set((rng() - .5) * (W - 6), .012, (rng() - .5) * (D - 6)); rug.receiveShadow = true; world.root.add(rug); }
-  const chN = Math.max(1, Math.round((W * D / 220) * d.torches)); for (let i = 0; i < chN; i++) world.chandelier((rng() - .5) * (W - 6), (rng() - .5) * (D - 6), 3.6, 10);
+  for (let i = 0; i < 6; i++) { const rug = new THREE.Mesh(new THREE.PlaneGeometry(3 + rng() * 2, 2 + rng() * 1.5), toon([P.red, P.purple, P.teal][i % 3])); rug.rotation.x = -Math.PI / 2; rug.position.set((rng() - .5) * (W - 6), .012, (rng() - .5) * (D - 6)); rug.receiveShadow = true; world.root.add(rug); }
+
   // hide things
   const searchables = [...A.props.values()].filter(p => p.pid !== A.safePid).map(p => p.pid); shuffle(searchables, rng);
-  A.need = Math.min(n + 2 + (cfg.level - 1), 10);
+  A.need = Math.min(n + 3 + (cfg.level - 1), 12);
   const contents = {}; let k = 0;
   for (let i = 0; i < A.need - 1; i++) contents[searchables[k++]] = 'key';
   contents[searchables[k++]] = 'note';
@@ -81,22 +105,35 @@ function buildManor(world, cfg) {
   for (; k < searchables.length; k++) if (rng() < d.trap) contents[searchables[k]] = 'trap';
   A.contents = contents;
   A.code = Array.from({ length: d.digits }, () => Math.floor(rng() * 10)).join('');
-  tag(world, room.door, 'door');
+  tag(room.door, 'door');
 
-  A.init = S => { S.found = 0; S.need = A.need; S.opened = {}; S.door = false; S.safeOpen = false; S.safeTries = 0; S.noteBy = null; };
+  // sentries
+  A.nav = buildNav(world.solids, W, D); A.nav.walls = world.solids.filter(s => s.wall);
+  A.sentryCount = Math.min(d.sentries + Math.floor(n / 2) + (cfg.level - 1), 14);
+  const sStart = []; for (let i = 0; i < A.sentryCount; i++) { let p; for (let t = 0; t < 200; t++) { p = A.nav.randomFree(rng); if (Math.hypot(p.x, p.z - D / 2) > 14 && !nearJail(p.x, p.z, 2)) break; } sStart.push(p); }
+  const brains = []; const srng = mulberry(cfg.seed ^ 0x5eed);
+
+  A.init = S => { S.found = 0; S.need = A.need; S.opened = {}; S.door = false; S.safeOpen = false; S.safeTries = 0; S.noteBy = null; S.jailed = {}; S.freedAt = 0; S.caught = []; S.sentries = sStart.map(p => ({ x: +p.x.toFixed(2), z: +p.z.toFixed(2), f: 0, st: 'patrol' })); };
   A.info = (pid, S) => {
     if (pid === 'door') return S.door ? null : S.found >= S.need ? { label: 'Unlock the door', hold: false } : { label: `Locked · ${S.need - S.found} more key${S.need - S.found === 1 ? '' : 's'}`, hold: false, locked: true };
+    if (pid === 'jail') { const k = Object.keys(S.jailed).length; return k ? { label: `Pick the jail lock (${k} inside)`, hold: true, holdTime: d.pick } : { label: 'The jail is empty', done: true }; }
     if (pid === A.safePid) return S.safeOpen ? { label: 'Empty safe', done: true } : { label: `Enter safe code (${A.code.length} digits)`, hold: false, safe: true };
     const pr = A.props.get(pid); if (!pr) return null;
     if (S.opened[pid]) return { label: 'Already searched', done: true };
     return { label: pr.label, hold: true };
   };
-  A.request = (S, from, e) => {
+  A.request = (S, from, e, ctx) => {
+    if (S.jailed[from] && e.type !== 'free') return;
     if (e.type === 'search') { if (S.opened[e.pid] || !A.props.has(e.pid) || e.pid === A.safePid) return; const c = A.contents[e.pid] || 'empty'; S.opened[e.pid] = { c, by: from }; if (c === 'key') S.found++; if (c === 'note') S.noteBy = from; }
     else if (e.type === 'door') { if (S.found >= S.need && !S.door) S.door = true; }
     else if (e.type === 'safe') { if (S.safeOpen) return; if (String(e.code) === A.code) { S.safeOpen = true; S.found++; S.opened[A.safePid] = { c: 'key', by: from }; } else S.safeTries++; }
+    else if (e.type === 'free') { if (!S.jailed[from] && Object.keys(S.jailed).length) { S.jailed = {}; S.freedAt = ctx.now; S.freedBy = from; } }
   };
-  A.hostUpdate = () => { };
+  A.hostUpdate = (dt, S, ctx) => {
+    const ps = ctx.players.map(p => Object.assign({}, p, { jailed: !!S.jailed[p.id] }));
+    const caught = stepSentries(S, brains, A.nav, ps, ctx.now, dt, { speed: d.sSpeed, sense: d.sense, beam: d.beam, grace: 8000 }, srng, cfg.startAt);
+    caught.forEach(c => { S.jailed[c.id] = true; S.caught = (S.caught || []).slice(-6).concat([{ id: c.id, by: c.by, at: ctx.now }]); });
+  };
   const shown = new Set(); let lastTries = 0;
   A.render = (dt, S, ctx) => {
     for (const pid in S.opened) {
@@ -107,196 +144,111 @@ function buildManor(world, cfg) {
     }
     if (S.door && !room.opened) { room.open(); if (ctx.fresh) ctx.fx('door'); }
     if (S.safeTries !== lastTries) { if (ctx.fresh && S.safeTries > lastTries) ctx.fx('safeWrong'); lastTries = S.safeTries; }
+    const k = Object.keys(S.jailed || {}).length; A.jail.light.intensity = (k ? 7 : 3) * (.8 + Math.sin(ctx.now / 180) * .2); shackle.rotation.z = 0;
   };
-  A.objective = S => S.door ? 'The door is open. Everyone into the exit!' : S.found >= S.need ? 'All keys found. Unlock the door in the north wall!' : `Search the manor for ${S.need} keys. One is in the safe; its code is on a note somewhere.`;
+  A.objective = S => S.door ? 'The door is open. Everyone into the exit!' : S.found >= S.need ? 'All keys found. Unlock the door in the north wall!' : `Find ${S.need} keys in the dark. One is in the safe; its code is on a note. Sentries hunt flashlights.`;
   A.progress = S => `Keys ${S.found}/${S.need}`;
   A.exitOpen = S => S.door;
+  A.ground = (p, prev) => p.y <= 0 ? { top: 0 } : null;
   return A;
 }
 
-/* =================================================================== AREA 2: THE PRESSURE HALL */
-function buildPlates(world, cfg) {
-  const rng = mulberry(cfg.seed), d = DIFF[cfg.diff], n = cfg.n;
-  const W = Math.min(24 + 3 * (n - 1), 44), D = Math.min(18 + 2 * (n - 1), 30);
-  const room = world.room(W, D, { floor: world.tex(TEX.checker('#3a3346', '#2a2434'), W / 4, D / 4), wall: TEX.brick, height: 4.2 });
-  const A = { name: AREA_NAMES[1], W, D, room, props: new Map(), spawn: spawns(D, n) };
-  const count = Math.min(n + 2 + Math.floor((cfg.level - 1) / 2), 9);
-  const linger = +(d.linger + Math.max(0, count - n) * .9).toFixed(1); // fewer players than plates means more running
-  const avoid = [{ x: 0, z: D / 2 - 1.5, r: 3.5 }, { x: 0, z: -D / 2 + .5, r: 3.5 }];
-  const pts = []; let tries = 0; const minD = Math.min(7, W / 3.2);
-  while (pts.length < count && tries++ < 5000) { const x = (rng() - .5) * (W - 3), z = (rng() - .5) * (D - 3); if (avoid.some(a => Math.hypot(a.x - x, a.z - z) < a.r)) continue; if (pts.some(p => Math.hypot(p.x - x, p.z - z) < minD)) continue; pts.push({ x, z }); }
-  A.plates = pts.map(p => {
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.15, .14, 32), toon(0x2c2638)); base.position.set(p.x, .07, p.z); world.root.add(base);
-    const gm = new THREE.MeshToonMaterial({ color: 0x3a2a14, emissive: 0xffb347, emissiveIntensity: .05 }); const top = new THREE.Mesh(new THREE.CylinderGeometry(.85, .85, .1, 32), gm); top.position.set(p.x, .18, p.z); outline(top, .03); world.root.add(top);
-    const beam = new THREE.Mesh(new THREE.CylinderGeometry(.8, .8, 4, 24, 1, true), new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false })); beam.position.set(p.x, 2.1, p.z); world.root.add(beam);
-    return { x: p.x, z: p.z, top, gm, beam };
-  });
-  for (let i = 0; i < Math.min(4 + n, 10); i++) { const x = (rng() - .5) * (W - 4), z = (rng() - .5) * (D - 4); if (avoid.some(a => Math.hypot(a.x - x, a.z - z) < a.r) || pts.some(p => Math.hypot(p.x - x, p.z - z) < 2.8)) continue; const pm = new THREE.MeshToonMaterial({ map: world.tex(TEX.brick, 1, 2) }); world.box(1.2, 4.2, 1.2, pm, x, 2.1, z, true, true, true); }
-  for (let i = 0; i < 8; i++) { const x = (rng() - .5) * (W - 3), z = (rng() - .5) * (D - 3); if (avoid.some(a => Math.hypot(a.x - x, a.z - z) < a.r) || pts.some(p => Math.hypot(p.x - x, p.z - z) < 2.6)) continue; placeProp(world, A, ['crate', 'barrel', 'boxes', 'armor'][i % 4], rng, x, z, Math.floor(rng() * 4) * Math.PI / 2, false); }
-  [-1, 1].forEach(s => [-.25, .25].forEach(f => world.torch(s * W / 2, f * D, -s * Math.PI / 2, 7)));
-  world.torch(-2.6, -D / 2, 0, 6); world.torch(2.6, -D / 2, 0, 6);
-  A.init = S => { S.plates = A.plates.map(() => 0); S.occ = A.plates.map(() => 0); S.door = false; };
-  A.info = () => null; A.request = () => { };
-  A.hostUpdate = (dt, S, ctx) => {
-    A.plates.forEach((pl, i) => {
-      const occ = ctx.players.some(p => !p.eaten && Math.hypot(p.x - pl.x, p.z - pl.z) < .95 && p.y < .6);
-      S.occ[i] = occ ? 1 : 0;
-      if (S.door || occ) S.plates[i] = linger; else S.plates[i] = Math.max(0, S.plates[i] - dt);
-    });
-    if (!S.door && S.plates.every(t => t > 0)) S.door = true;
-  };
-  const lastOcc = [];
-  A.render = (dt, S, ctx) => {
-    A.plates.forEach((pl, i) => {
-      const t = S.plates[i] || 0, f = t / linger, occ = S.occ[i];
-      pl.gm.emissiveIntensity = occ || S.door ? 2 : (t > 0 ? .3 + 1.3 * f : .05);
-      pl.top.position.y = occ ? .14 : .18;
-      pl.beam.material.opacity = S.door ? .12 : t > 0 ? .08 + .14 * f : 0; pl.beam.scale.y = t > 0 ? .3 + .7 * f : .01;
-      if (occ && !lastOcc[i] && ctx.fresh) ctx.fx('plate'); lastOcc[i] = occ;
-    });
-    if (S.door && !room.opened) { room.open(); if (ctx.fresh) ctx.fx('door'); }
-  };
-  A.objective = S => S.door ? 'The gate is open. Everyone into the exit!' : `Light all ${A.plates.length} plates at once. A plate stays lit for ${linger} s after you step off.`;
-  A.progress = S => `Plates ${(S.plates || []).filter(t => t > 0).length}/${A.plates.length}`;
-  A.exitOpen = S => S.door;
-  return A;
-}
-
-/* =================================================================== AREA 3: THE GRINDER */
+/* =================================================================== ROOM 2: THE GRINDER (platform course over lava) */
+function lavaDraw(x, s, rng) { x.fillStyle = '#1a0503'; x.fillRect(0, 0, s, s); for (let i = 0; i < 40; i++) { x.strokeStyle = `rgba(${200 + rng() * 55},${40 + rng() * 60},10,${.4 + rng() * .4})`; x.lineWidth = 2 + rng() * 5; x.beginPath(); let px = rng() * s, py = rng() * s; x.moveTo(px, py); for (let k = 0; k < 5; k++) { px += (rng() - .5) * 60; py += (rng() - .5) * 60; x.lineTo(px, py); } x.stroke(); } }
 function buildGrinder(world, cfg) {
   const rng = mulberry(cfg.seed), d = DIFF[cfg.diff], n = cfg.n;
-  const W = Math.min(10 + 2 * (n - 1), 18), D = 56 + (W - 10) * 2;
-  const room = world.room(W, D, { floor: world.tex(TEX.metal, W / 3, D / 3), wall: TEX.brick, height: 4 });
-  room.open();
-  const A = { name: AREA_NAMES[2], W, D, room, props: new Map(), spawn: spawns(D, n) };
-  const mul = d.speed * (1 + .08 * (cfg.level - 1));
-  const rows = Math.min(6 + (cfg.level - 1), 11), z0 = D / 2 - 3.5 - W / 2, z1 = -D / 2 + 3.5 + W / 2, step = (z0 - z1) / (rows - 1);
-  const pool = []; while (pool.length < rows) pool.push(...shuffle(['low', 'high', 'slide', 'spikes', 'pendulum'], rng)); const order = pool.slice(0, rows);
-  const hazM = new THREE.MeshToonMaterial({ map: world.tex(TEX.hazard, 2, 1) }), steel = toon(0x9d99ab), red = new THREE.MeshToonMaterial({ color: 0xff3344, emissive: 0xff2233, emissiveIntensity: .7 });
-  const hz = [];
-  order.forEach((type, k) => {
-    const z = z0 - k * step, ph = rng() * 10;
-    if (type === 'low' || type === 'high') {
-      const y = type === 'low' ? .42 : 1.45, L = W / 2 - .25;
-      const post = world.box(.45, y + .2, .45, steel, 0, (y + .2) / 2, z, true, true);
-      const pv = new THREE.Group(); pv.position.set(0, y, z); world.root.add(pv);
-      const bar = new THREE.Mesh(new THREE.CylinderGeometry(.13, .13, L * 2, 10), hazM); bar.rotation.z = Math.PI / 2; bar.castShadow = true; outline(bar, .025); pv.add(bar);
-      [-1, 1].forEach(s => { const e = new THREE.Mesh(new THREE.SphereGeometry(.2, 10, 8), red); e.position.x = s * L; pv.add(e); });
-      const w = (.9 + rng() * .35) * mul * (rng() < .5 ? 1 : -1);
-      hz.push({ type, set(t) { pv.rotation.y = ph + w * t; }, hit(p, t) { const a = ph + w * t, cx = Math.cos(a), cz = -Math.sin(a); const s = clamp(p.x * cx + (p.z - z) * cz, -L, L); const dd = Math.hypot(p.x - s * cx, p.z - (z + s * cz)); if (dd > .48) return false; return type === 'low' ? p.y < .55 : (p.y + p.h > 1.32 && p.y < 1.6); } });
-      const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.4, .45), new THREE.MeshBasicMaterial({ map: world.signTex(type === 'low' ? 'JUMP' : 'DUCK', '#ffc93c'), transparent: true })); sign.position.set(-W / 2 + .03, 2.4, z); sign.rotation.y = Math.PI / 2; world.root.add(sign);
-    } else if (type === 'slide') {
-      const nb = cfg.diff === 'easy' && cfg.level === 1 ? 1 : 2, range = W / 2 - 1.1, w = (1 + rng() * .4) * mul;
-      const blocks = Array.from({ length: nb }, (_, b) => ({ m: world.box(1.8, 1.7, 1.2, hazM, 0, .85, z, false, true), ph: b * Math.PI, x: 0 }));
-      hz.push({ type, set(t) { blocks.forEach(b => { b.x = Math.sin(ph + t * w + b.ph) * range; b.m.position.x = b.x; }); }, hit(p) { return blocks.some(b => { const cx = clamp(p.x, b.x - .9, b.x + .9), cz = clamp(p.z, z - .6, z + .6); return Math.hypot(p.x - cx, p.z - cz) < .36; }); } });
-    } else if (type === 'spikes') {
-      const g = new THREE.Group(); g.position.set(0, 0, z); world.root.add(g); const cone = new THREE.ConeGeometry(.14, .6, 6);
-      for (let x = -W / 2 + .3; x < W / 2; x += .45) for (let r = -1; r <= 1; r++) { const c = new THREE.Mesh(cone, steel); c.position.set(x + (r % 2 ? .22 : 0), .3, r * .5); c.castShadow = true; g.add(c); }
-      const warnM = new THREE.MeshBasicMaterial({ color: 0xff2233, transparent: true, opacity: 0 }); const warn = new THREE.Mesh(new THREE.PlaneGeometry(W, 1.7), warnM); warn.rotation.x = -Math.PI / 2; warn.position.set(0, .02, z); world.root.add(warn);
-      const Pd = 3.2 / mul; let up = false;
-      hz.push({ type, set(t) { const f = ((t + ph) % Pd) / Pd; let y = -.75; warnM.opacity = 0; up = false; if (f > .5 && f < .7) { warnM.opacity = .25 + .25 * Math.sin(t * 40); y = -.62; } else if (f >= .7) { y = lerp(-.62, 0, Math.min(1, (f - .7) * 12)); up = y > -.25; } g.position.y = y; }, hit(p) { return up && Math.abs(p.z - z) < .95 && p.y < .5; } });
-    } else {
-      const top = 3.9, Lr = 3.2, amp = Math.asin(Math.min(.95, (W / 2 - .6) / Lr)), w = (1.5 + rng() * .4) * Math.sqrt(mul);
-      const pv = new THREE.Group(); pv.position.set(0, top, z); world.root.add(pv);
-      const rod = new THREE.Mesh(new THREE.CylinderGeometry(.05, .05, Lr, 6), steel); rod.position.y = -Lr / 2; pv.add(rod);
-      const blade = new THREE.Mesh(new THREE.CylinderGeometry(.75, .75, .12, 24, 1, false, Math.PI, Math.PI), steel); blade.rotation.x = Math.PI / 2; blade.position.y = -Lr; outline(blade, .02); pv.add(blade);
-      world.box(W, .2, .3, steel, 0, top + .05, z);
-      hz.push({ type, set(t) { pv.rotation.z = Math.sin(ph + t * w) * amp; }, hit(p, t) { const a = Math.sin(ph + t * w) * amp; const bx = Math.sin(a) * Lr, by = top - Math.cos(a) * Lr; return Math.abs(p.z - z) < .4 && Math.abs(p.x - bx) < .75 && by - .75 < p.y + p.h && by > p.y - .1; } });
+  const mul = d.cMul * (1 + .06 * (cfg.level - 1));
+  const W = 30 + 2 * (n - 1);
+  const segs = Math.min(d.course + 3 * (cfg.level - 1), 40);
+  // lay out the course from south (start) to north (goal), in local coordinates first
+  const plats = []; const add = o => { plats.push(o); return o; };
+  let prev = add({ type: 'start', x: 0, y: 2, z: 0, w: 7, d: 7 });
+  const types = ['static', 'static', 'narrow', 'move', 'lift', 'static', 'move', 'spinner'].concat(d.blink ? ['blink', 'blink'] : []);
+  for (let k = 0; k < segs; k++) {
+    let type = (k + 1) % 6 === 0 ? 'check' : types[Math.floor(rng() * types.length)];
+    if (k < 2 && type !== 'check') type = 'static';
+    const size = { static: [2.6 + rng() * 1.6, 2.6 + rng() * 1.6], narrow: [.75, 4.5 + rng() * 2], move: [2.6, 2.6], lift: [2.8, 2.8], blink: [2.6, 2.6], spinner: [7, 7], check: [5, 5] }[type];
+    const top = prev.lift ? prev.y + prev.lift : prev.y;
+    let dy = (rng() - .45) * 1.6; if (type === 'lift' || type === 'spinner' || type === 'check') dy = Math.min(dy, .2);
+    const y = clamp(top + dy, 1.6, 9);
+    const rise = Math.max(0, y - top);
+    const gapMax = clamp(3.3 - rise * 1.6, 1.3, 3.3), gap = 1.2 + rng() * (gapMax - 1.2) * Math.min(1, .55 + .3 * mul);
+    let x = clamp(prev.x + (rng() - .5) * 7, -W / 2 + 4 + size[0] / 2, W / 2 - 4 - size[0] / 2);
+    // keep the next edge within jumping reach sideways too
+    const side = Math.max(0, Math.abs(x - prev.x) - (prev.w + size[0]) / 2); if (side > .2) x = prev.x + Math.sign(x - prev.x) * ((prev.w + size[0]) / 2 - .4);
+    const z = prev.z - prev.d / 2 - gap - size[1] / 2;
+    const p = add({ type, x, y, z, w: size[0], d: size[1] });
+    if (type === 'move') { p.ax = 2.5 + rng() * 2; p.sp = (.6 + rng() * .3) * mul; p.ph = rng() * 6; p.x = clamp(p.x, -W / 2 + 4 + p.ax, W / 2 - 4 - p.ax); }
+    if (type === 'lift') { p.lift = 1.6 + rng() * .6; p.sp = (.7 + rng() * .3) * mul; p.ph = rng() * 6; }
+    if (type === 'blink') { p.on = 2.6 / mul + 1; p.off = 1.1; p.ph = rng() * 4; }
+    if (type === 'spinner') { p.ws = (1 + rng() * .4) * mul * (rng() < .5 ? 1 : -1); p.ph = rng() * 6; }
+    prev = p;
+  }
+  const goal = add({ type: 'goal', x: clamp(prev.x, -W / 2 + 6, W / 2 - 6), y: prev.lift ? prev.y + prev.lift * .5 : prev.y, z: prev.z - prev.d / 2 - 2 - 4, w: 8, d: 8 });
+  const len = -goal.z + 4 + 3.5, D = len + 8;
+  const shift = D / 2 - 6; plats.forEach(p => p.z += shift);
+  const room = world.room(W, D, { floor: world.tex(lavaDraw, W / 5, D / 5, rng), wall: TEX.brick, height: 14 });
+  room.floorMesh.material.emissive = new THREE.Color(0xff3a10); room.floorMesh.material.emissiveMap = room.floorMesh.material.map; room.floorMesh.material.emissiveIntensity = .55;
+  const A = { name: AREA_NAMES[1], W, D, room, props: new Map(), kind: 'grinder', plats };
+  A.spawn = spawns(D, n, plats[0].y, plats[0].z + 1.5).map(s => Object.assign(s, { x: s.x * .9 }));
+  room.exitZone = { x0: goal.x - goal.w / 2, x1: goal.x + goal.w / 2, z0: goal.z - goal.d / 2, z1: goal.z + goal.d / 2, y0: goal.y - .6 };
+
+  const metal = new THREE.MeshToonMaterial({ map: world.tex(TEX.metal, 1, 1) });
+  const trimCol = { start: 0x7dffc4, goal: 0xffc94d, check: 0x7dffc4, static: 0x4dd6ff, narrow: 0x4dd6ff, move: 0xc38bff, lift: 0xff9a3c, blink: 0xff4d5e, spinner: 0x4dd6ff };
+  const hazM = new THREE.MeshToonMaterial({ map: world.tex(TEX.hazard, 2, 1) });
+  plats.forEach(p => {
+    const g = new THREE.Group(); world.root.add(g); p.g = g;
+    const thick = p.type === 'narrow' ? .3 : .5;
+    const b = new THREE.Mesh(new THREE.BoxGeometry(p.w, thick, p.d), p.type === 'blink' ? new THREE.MeshToonMaterial({ map: metal.map, color: 0xffb0b0, transparent: true }) : metal); b.position.y = -thick / 2; b.castShadow = b.receiveShadow = true; outline(b, .03); g.add(b); p.mesh = b;
+    const tm = new THREE.MeshBasicMaterial({ color: trimCol[p.type], transparent: true, opacity: .55 }); p.trim = tm;
+    [[p.w, .05, .06, 0, -p.d / 2], [p.w, .05, .06, 0, p.d / 2], [.06, .05, p.d, -p.w / 2, 0], [.06, .05, p.d, p.w / 2, 0]].forEach(([w, h, dd, x, z]) => { const t = new THREE.Mesh(new THREE.BoxGeometry(w, h, dd), tm); t.position.set(x, .01, z); g.add(t); });
+    if (p.type === 'goal') { const s = new THREE.Mesh(new THREE.PlaneGeometry(2.4, .75), new THREE.MeshBasicMaterial({ map: world.signTex('EXIT', '#ffc94d'), transparent: true })); s.position.set(0, 2.2, -p.d / 2 + .2); g.add(s); const L = new THREE.PointLight(0xffc94d, 6, 10, 1.5); L.position.y = 2; g.add(L); }
+    if (p.type === 'check') { const L = new THREE.PointLight(0x7dffc4, 2.5, 7, 1.6); L.position.y = 1.5; g.add(L); }
+    if (p.type === 'spinner') {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(.22, .22, .7, 10), toon(0x9d99ab)); post.position.y = .35; g.add(post);
+      const pv = new THREE.Group(); pv.position.y = .4; g.add(pv); p.pv = pv; p.L = p.w / 2 - .2;
+      const barM = new THREE.Mesh(new THREE.CylinderGeometry(.12, .12, p.L * 2, 10), hazM); barM.rotation.z = Math.PI / 2; outline(barM, .02); pv.add(barM);
     }
   });
-  A.checkpoints = []; for (let k = 2; k < rows; k += 2) { const cz = z0 - k * step + step / 2; A.checkpoints.push(cz); const m = new THREE.Mesh(new THREE.PlaneGeometry(W, .5), new THREE.MeshBasicMaterial({ color: 0x7dffc4, transparent: true, opacity: .35 })); m.rotation.x = -Math.PI / 2; m.position.set(0, .025, cz); world.root.add(m); }
-  for (let z = D / 2 - 4; z > -D / 2 + 2; z -= 7) { world.torch(-W / 2, z, Math.PI / 2, 6); world.torch(W / 2, z - 3.5, -Math.PI / 2, 6); }
-  A.hazards = hz;
+  const posAt = (p, t) => {
+    let x = p.x, y = p.y, z = p.z;
+    if (p.type === 'move') x = p.x + Math.sin(p.ph + t * p.sp) * p.ax;
+    if (p.type === 'lift') y = p.y + (Math.sin(p.ph + t * p.sp) * .5 + .5) * p.lift;
+    return { x, y, z };
+  };
+  const solidAt = (p, t) => { if (p.type !== 'blink') return true; const c = p.on + p.off, f = ((t + p.ph) % c + c) % c; return f < p.on; };
+  plats.forEach(p => { p.pos = t => posAt(p, t); });
+  A.checkpoints = plats.filter(p => p.type === 'check' || p.type === 'start');
+
   A.init = S => { S.door = true; };
   A.info = () => null; A.request = () => { }; A.hostUpdate = () => { };
-  A.render = (dt, S, ctx) => {
-    const t = (ctx.now - cfg.startAt) / 1000; hz.forEach(h => h.set(t));
-    const me = ctx.me; if (!me || me.eaten || ctx.phase !== 'play') return;
-    A.checkpoints.forEach(cz => { if (me.z < cz && me.ck.z > cz) { me.ck = { x: clamp(me.x, -W / 2 + .6, W / 2 - .6), z: cz - .2 }; ctx.fx('checkpoint'); } });
-    if (me.inv <= 0 && hz.some(h => h.hit(me, t))) ctx.fx('smack');
+  A.ground = (pl, prevFeet, t) => {
+    let best = null;
+    for (const p of plats) {
+      if (!solidAt(p, t)) continue; const q = posAt(p, t);
+      if (Math.abs(pl.x - q.x) > p.w / 2 + .12 || Math.abs(pl.z - q.z) > p.d / 2 + .12) continue;
+      if (prevFeet >= q.y - .35 && pl.y <= q.y + .02 && (!best || q.y > best.top)) best = { top: q.y, plat: p };
+    }
+    return best;
   };
-  A.objective = () => 'Get everyone past the traps. Jump the low bars, crouch under the high ones.';
+  A.fallY = -.2;
+  A.render = (dt, S, ctx) => {
+    const t = (ctx.now - cfg.startAt) / 1000;
+    plats.forEach(p => {
+      const q = posAt(p, t); p.g.position.set(q.x, q.y, q.z);
+      if (p.type === 'blink') { const c = p.on + p.off, f = ((t + p.ph) % c + c) % c; const on = f < p.on, warn = on && f > p.on - .9; p.mesh.material.opacity = on ? (warn ? .4 + .4 * Math.abs(Math.sin(t * 18)) : 1) : .08; p.trim.opacity = on ? .7 : .15; }
+      if (p.pv) p.pv.rotation.y = p.ph + p.ws * t;
+    });
+    const me = ctx.me; if (!me || me.eaten || ctx.phase !== 'play') return;
+    if (me.ground && me.plat && (me.plat.type === 'check' || me.plat.type === 'goal') && me.ck.plat !== me.plat) { const q = posAt(me.plat, t); me.ck = { x: q.x, z: q.z, y: q.y, plat: me.plat }; if (me.plat.type === 'check') ctx.fx('checkpoint'); }
+    // spinner bars knock you off
+    if (me.inv <= 0) for (const p of plats) { if (!p.pv) continue; const a = p.ph + p.ws * t, cx = Math.cos(a), cz = -Math.sin(a); const s = clamp((me.x - p.x) * cx + (me.z - p.z) * cz, -p.L, p.L); if (Math.hypot(me.x - (p.x + s * cx), me.z - (p.z + s * cz)) < .45 && me.y < p.y + .55 && me.y > p.y - .3) { ctx.fx('smack'); break; } }
+    if (me.y < A.fallY) ctx.fx('fell');
+  };
+  A.objective = () => 'Jump across the platforms to the gold exit. Fall in the lava and you go back to your last green checkpoint.';
   A.progress = (S, ctx) => ctx.exitText();
   A.exitOpen = () => true;
   return A;
 }
 
-/* =================================================================== AREA 4: THE RUNE VAULT */
-const RUNES = [{ c: '#ffb347', d: 'sun' }, { c: '#4de1c9', d: 'wave' }, { c: '#ff5d73', d: 'tri' }, { c: '#b388ff', d: 'moon' }, { c: '#9cff57', d: 'eye' }, { c: '#f4f1ff', d: 'star' }, { c: '#4d9bff', d: 'drop' }, { c: '#ff8ae0', d: 'heart' }];
-function runeTex(r) {
-  const c = document.createElement('canvas'); c.width = c.height = 256; const x = c.getContext('2d'); const m = 128;
-  x.fillStyle = '#120e1c'; x.fillRect(0, 0, 256, 256); x.strokeStyle = r.c; x.fillStyle = r.c; x.lineWidth = 16; x.lineCap = x.lineJoin = 'round';
-  x.save(); x.globalAlpha = .35; x.lineWidth = 6; x.beginPath(); x.arc(m, m, 112, 0, 7); x.stroke(); x.restore();
-  const d = r.d; x.beginPath();
-  if (d === 'sun') { x.arc(m, m, 34, 0, 7); x.stroke(); for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; x.beginPath(); x.moveTo(m + Math.cos(a) * 56, m + Math.sin(a) * 56); x.lineTo(m + Math.cos(a) * 82, m + Math.sin(a) * 82); x.stroke(); } }
-  else if (d === 'wave') { for (let k = -1; k <= 1; k++) { x.beginPath(); for (let i = 0; i <= 40; i++) { const px = m - 75 + i * 3.75, py = m + k * 36 + Math.sin(i / 40 * Math.PI * 3) * 14; i ? x.lineTo(px, py) : x.moveTo(px, py); } x.stroke(); } }
-  else if (d === 'tri') { x.moveTo(m, m - 72); x.lineTo(m + 68, m + 50); x.lineTo(m - 68, m + 50); x.closePath(); x.stroke(); }
-  else if (d === 'moon') { x.arc(m, m, 64, Math.PI * .3, Math.PI * 1.7); x.arc(m + 30, m, 48, Math.PI * 1.6, Math.PI * .4, true); x.closePath(); x.fill(); }
-  else if (d === 'eye') { x.moveTo(m - 80, m); x.quadraticCurveTo(m, m - 70, m + 80, m); x.quadraticCurveTo(m, m + 70, m - 80, m); x.stroke(); x.beginPath(); x.arc(m, m, 20, 0, 7); x.fill(); }
-  else if (d === 'star') { for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? 32 : 78; i ? x.lineTo(m + Math.cos(a) * rr, m + Math.sin(a) * rr) : x.moveTo(m + Math.cos(a) * rr, m + Math.sin(a) * rr); } x.closePath(); x.stroke(); }
-  else if (d === 'drop') { x.moveTo(m, m - 80); x.bezierCurveTo(m + 70, m, m + 50, m + 70, m, m + 70); x.bezierCurveTo(m - 50, m + 70, m - 70, m, m, m - 80); x.stroke(); }
-  else { x.moveTo(m, m + 66); x.bezierCurveTo(m - 100, m, m - 50, m - 80, m, m - 30); x.bezierCurveTo(m + 50, m - 80, m + 100, m, m, m + 66); x.fill(); }
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
-}
-function buildRunes(world, cfg) {
-  const rng = mulberry(cfg.seed), d = DIFF[cfg.diff], n = cfg.n;
-  const W = Math.min(20 + 2 * (n - 1), 36), D = 18;
-  const room = world.room(W, D, { floor: world.tex(TEX.stone(240, 26), W / 4, D / 4, rng), wall: TEX.brick, height: 5 });
-  const A = { name: AREA_NAMES[3], W, D, room, props: new Map(), spawn: spawns(D, n) };
-  const N = d.runes, rad = 6;
-  A.tiles = []; for (let i = 0; i < N; i++) {
-    const a = -Math.PI / 2 + i * Math.PI * 2 / N + Math.PI / N, x = Math.cos(a) * rad * 1.15, z = Math.sin(a) * rad * .85;
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.2, .12, 32), toon(0x231c30)); base.position.set(x, .06, z); world.root.add(base);
-    const tx = runeTex(RUNES[i]); const m = new THREE.MeshToonMaterial({ map: tx, emissiveMap: tx, emissive: 0xffffff, emissiveIntensity: .15 });
-    const top = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, .06, 32), m); top.position.set(x, .15, z); top.rotation.y = -Math.PI / 2; world.root.add(top);
-    A.tiles.push({ x, z, m, glow: 0, col: new THREE.Color(RUNES[i].c) });
-  }
-  world.box(1.4, .8, 1.4, toon(0x2a2236), 0, .4, 0, true, true);
-  const cm = new THREE.MeshToonMaterial({ color: 0x2a2340, emissive: 0x6b5aff, emissiveIntensity: .5 });
-  const cry = new THREE.Mesh(new THREE.OctahedronGeometry(.9, 0), cm); cry.scale.set(1, 1.6, 1); cry.position.y = 2.2; outline(cry, .04); world.root.add(cry);
-  const cl = new THREE.PointLight(0x6b5aff, 16, 16, 1.4); cl.position.set(0, 3, 0); world.root.add(cl);
-  const L = Math.min(d.seq + (cfg.level - 1), 12); const seq = []; while (seq.length < L) { const v = Math.floor(rng() * N); if (v !== seq[seq.length - 1]) seq.push(v); }
-  A.seq = seq;
-  const lx = -W / 2 + 1.6, lz = D / 2 - 2.4;
-  const lect = new THREE.Group(); lect.position.set(lx, 0, lz); world.root.add(lect);
-  const b1 = new THREE.Mesh(new THREE.CylinderGeometry(.2, .3, 1, 8), toon(P.woodDark)); b1.position.y = .5; outline(b1); lect.add(b1);
-  const b2 = new THREE.Mesh(new THREE.BoxGeometry(.8, .08, .6), new THREE.MeshToonMaterial({ color: P.woodLight, emissive: 0x6b5aff, emissiveIntensity: .4 })); b2.position.y = 1.05; b2.rotation.x = -.3; outline(b2); lect.add(b2);
-  world.solid(lx - .4, lx + .4, lz - .4, lz + .4); tag(world, lect, 'lectern');
-  [-1, 1].forEach(s => [-.25, .25].forEach(f => world.torch(s * W / 2, f * D, -s * Math.PI / 2, 6)));
-  for (let i = 0; i < 10; i++) { const a = rng() * 7, r = 7.5 + rng() * 2; const x = Math.cos(a) * r * 1.2, z = Math.sin(a) * r * .7; if (Math.abs(x) > W / 2 - 1 || Math.abs(z) > D / 2 - 1.2 || (Math.abs(x) < 3 && Math.abs(z) > D / 2 - 4)) continue; const c = new THREE.Mesh(new THREE.CylinderGeometry(.08, .08, .3 + rng() * .3, 8), toon(P.cream)); c.position.set(x, .2, z); world.root.add(c); }
-  const stepD = d.step;
-  A.init = S => { S.rune = { st: 'wait', at: 0, prog: 0, wrongAt: 0, okAt: 0, okTile: -1 }; S.door = false; S.waitUntil = 0; };
-  A.info = (pid, S) => pid === 'lectern' && !S.door && S.rune.st === 'input' ? { label: d.replayPen ? `Replay pattern (costs ${d.replayPen} s)` : 'Replay pattern', hold: false } : null;
-  A.request = (S, from, e, ctx) => { if (e.type === 'replay' && S.rune.st === 'input' && !S.door) { S.rune = { st: 'wait', at: ctx.now, prog: 0, wrongAt: 0, okAt: 0, okTile: -1 }; S.penalty = (S.penalty || 0) + d.replayPen; } };
-  const hostTile = {};
-  A.hostUpdate = (dt, S, ctx) => {
-    const R = S.rune, now = ctx.now;
-    if (R.st === 'wait') { if (!R.at) R.at = now; if (now - R.at > 1500) { R.st = 'show'; R.at = now; } }
-    else if (R.st === 'show') { if (now - R.at > L * stepD * 1000 + 200) { R.st = 'input'; R.at = now; } }
-    ctx.players.forEach(p => {
-      if (p.eaten) return; let on = -1; A.tiles.forEach((t, i) => { if (Math.hypot(p.x - t.x, p.z - t.z) < .95) on = i; });
-      const prev = hostTile[p.id] ?? -1;
-      if (on >= 0 && prev !== on) { hostTile[p.id] = on; if (R.st === 'input' && !S.door) { if (seq[R.prog] === on) { R.prog++; R.okAt = now; R.okTile = on; if (R.prog >= L) { S.door = true; R.st = 'done'; } } else { S.rune = { st: 'wait', at: now, prog: 0, wrongAt: now, okAt: 0, okTile: -1 }; } } }
-      else if (on < 0 && prev >= 0) { const t = A.tiles[prev]; if (Math.hypot(p.x - t.x, p.z - t.z) > 1.2) hostTile[p.id] = -1; }
-    });
-  };
-  let lastStep = -1, lastOk = 0, lastWrong = 0;
-  A.render = (dt, S, ctx) => {
-    const R = S.rune || {}; cry.rotation.y += dt * .8; cry.position.y = 2.2 + Math.sin(ctx.now / 500) * .12;
-    let lit = -1;
-    if (R.st === 'show') { const e = (ctx.now - R.at) / 1000, s = Math.floor(e / stepD), f = (e % stepD) / stepD; if (s < L && f < .72) { lit = seq[s]; if (s !== lastStep) { lastStep = s; ctx.fx('rune', { i: lit }); } } } else lastStep = -1;
-    if (R.okAt && R.okAt !== lastOk) { lastOk = R.okAt; A.tiles[R.okTile].glow = 1; if (ctx.fresh) ctx.fx('rune', { i: R.okTile }); }
-    if (R.wrongAt && R.wrongAt !== lastWrong) { lastWrong = R.wrongAt; if (ctx.fresh) ctx.fx('wrong'); }
-    A.tiles.forEach((t, i) => { if (i === lit) t.glow = 1; t.glow = Math.max(0, t.glow - dt * 2.4); t.m.emissiveIntensity = .15 + t.glow * 2.2; });
-    const wrongNow = R.wrongAt && ctx.now - R.wrongAt < 1000;
-    const target = wrongNow ? new THREE.Color(0xff2233) : lit >= 0 ? A.tiles[lit].col : S.door ? new THREE.Color(0x7dffc4) : new THREE.Color(0x6b5aff);
-    cm.emissive.lerp(target, Math.min(1, dt * (lit >= 0 ? 20 : 4))); cl.color.copy(cm.emissive); cm.emissiveIntensity = lit >= 0 ? 2 : 1;
-    if (S.door && !room.opened) { room.open(); if (ctx.fresh) ctx.fx('door'); }
-  };
-  A.objective = S => S.door ? 'The vault is open. Everyone into the exit!' : (S.rune || {}).st === 'input' ? 'Step on the runes in the order the crystal showed. Anyone can step.' : 'Watch the crystal. Remember the order of the colors.';
-  A.progress = S => `Pattern ${(S.rune || {}).prog || 0}/${L}`;
-  A.exitOpen = S => S.door;
-  return A;
-}
-
-export const BUILDERS = [buildManor, buildPlates, buildGrinder, buildRunes];
+export const BUILDERS = [buildStudy, buildGrinder];

@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { Net } from './net.js';
 import { Voice } from './voice.js';
 import { World, collide, wallBetween, clamp, lerp } from './world.js';
-import { BUILDERS, DIFF, AREA_NAMES } from './areas.js';
+import { BUILDERS, DIFF, AREA_NAMES, ROOMS } from './areas.js';
+import { makeSentry, animSentry } from './sentry.js';
 import { makeMonster, animMonster, stepMonster } from './monster.js';
 import { toon, outline } from './props.js';
 
@@ -18,12 +19,22 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPrefere
 renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.75));
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.LinearToneMapping; renderer.toneMappingExposure = settings.bright;
-const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0d0b14); scene.fog = new THREE.Fog(0x0d0b14, 16, 46);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x000000); scene.fog = new THREE.Fog(0x000000, 16, 46);
 const camera = new THREE.PerspectiveCamera(72, 1, .05, 140); camera.rotation.order = 'YXZ'; scene.add(camera);
 const hemi = new THREE.HemisphereLight(0x9a88c8, 0x221830, .7); scene.add(hemi);
 const flash = new THREE.SpotLight(0xfff1d6, 30, 26, .55, .45, 1.4); flash.castShadow = true; flash.shadow.mapSize.set(1024, 1024); flash.shadow.bias = -.0006; flash.shadow.camera.near = .2;
 flash.position.set(.25, -.2, 0); camera.add(flash); camera.add(flash.target); flash.target.position.set(0, -.15, -1);
 const world = new World(scene);
+// Teammates' flashlights are real lights too: a fixed pool so shaders never recompile mid-game.
+const remoteLights = Array.from({ length: 7 }, () => { const L = new THREE.SpotLight(0xfff1d6, 0, 24, .5, .5, 1.4); scene.add(L); scene.add(L.target); return L; });
+function darkness(on) {
+  if (on) { hemi.color.set(0x6a5a90); hemi.intensity = .03; scene.fog.near = 8; scene.fog.far = 30; camera.far = 34; }
+  else { hemi.color.set(0x9a88c8); hemi.intensity = .7; scene.fog.near = 16; scene.fog.far = 46; camera.far = 140; }
+  camera.updateProjectionMatrix();
+}
+// Flashlights stutter when a sentry is close. Returns a brightness multiplier.
+function flicker(d) { if (d > 11) return 1; const p = 1 - d / 11; if (Math.random() < p * p * .6) return Math.random() * .2; return 1 - p * .35 * Math.random(); }
+function nearestSentry(x, z) { const ss = app.S && app.S.sentries; if (!ss) return 1e9; let b = 1e9; for (const s of ss) { const d = Math.hypot(s.x - x, s.z - z); if (d < b) b = d; } return b; }
 function resize() { renderer.setSize(innerWidth, innerHeight, false); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
 addEventListener('resize', resize); resize();
 
@@ -35,6 +46,7 @@ function audioInit() {
   try { AC = new (window.AudioContext || window.webkitAudioContext)(); sfxOut = AC.createGain(); sfxOut.gain.value = .45; sfxOut.connect(AC.destination); voice.attach(AC); voice.setVolume(settings.vol); } catch (e) { AC = null; }
 }
 function tone(f, d, type, v, delay, slide) { if (!AC) return; const t = AC.currentTime + (delay || 0); const o = AC.createOscillator(), g = AC.createGain(); o.type = type || 'sine'; o.frequency.setValueAtTime(f, t); if (slide) o.frequency.exponentialRampToValueAtTime(slide, t + d); g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(v || .2, t + .01); g.gain.exponentialRampToValueAtTime(.0001, t + d); o.connect(g); g.connect(sfxOut); o.start(t); o.stop(t + d + .05); }
+function click(vol, pan) { if (!AC) return; const t = AC.currentTime; const o = AC.createOscillator(), g = AC.createGain(), pn = AC.createStereoPanner ? AC.createStereoPanner() : null; o.type = 'square'; o.frequency.setValueAtTime(2800 + Math.random() * 1500, t); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.0001, t + .03); o.connect(g); if (pn) { pn.pan.value = clamp(pan, -1, 1); g.connect(pn); pn.connect(sfxOut); } else g.connect(sfxOut); o.start(t); o.stop(t + .05); }
 function noise(d, v, ff, delay) { if (!AC) return; const t = AC.currentTime + (delay || 0); const len = Math.floor(AC.sampleRate * d), b = AC.createBuffer(1, len, AC.sampleRate), ch = b.getChannelData(0); for (let i = 0; i < len; i++) ch[i] = Math.random() * 2 - 1; const s = AC.createBufferSource(); s.buffer = b; const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = ff || 800; const g = AC.createGain(); g.gain.setValueAtTime(v || .2, t); g.gain.exponentialRampToValueAtTime(.0001, t + d); s.connect(f); f.connect(g); g.connect(sfxOut); s.start(t); }
 const SFX = {
   key() { [660, 880, 1320].forEach((f, i) => tone(f, .2, 'triangle', .22, i * .07)); }, empty() { tone(150, .18, 'sine', .22); noise(.12, .1, 500); },
@@ -42,12 +54,15 @@ const SFX = {
   tick() { tone(1800, .04, 'square', .07); }, wrong() { tone(190, .4, 'sawtooth', .2, 0, 90); }, good(i) { tone(392 * Math.pow(1.122, i), .25, 'triangle', .22); }, plate() { tone(440, .08, 'sine', .12); },
   hit() { noise(.22, .35, 1400); tone(220, .2, 'square', .13, 0, 70); }, roar() { tone(65, 1.8, 'sawtooth', .35, 0, 32); tone(98, 1.5, 'sawtooth', .22, .06, 40); noise(1.6, .35, 450); },
   chomp() { noise(.18, .55, 2200); tone(130, .2, 'square', .3, 0, 45); }, win() { [523, 659, 784, 1046].forEach((f, i) => tone(f, .32, 'triangle', .22, i * .11)); },
-  trap() { tone(900, .08, 'square', .14); tone(1250, .08, 'square', .14, .09); noise(.3, .2, 3500, .05); }, step() { noise(.05, .04, 300); }, jump() { tone(300, .1, 'sine', .06, 0, 420); }
+  trap() { tone(900, .08, 'square', .14); tone(1250, .08, 'square', .14, .09); noise(.3, .2, 3500, .05); }, step() { noise(.05, .04, 300); }, jump() { tone(300, .1, 'sine', .06, 0, 420); },
+  screech() { tone(1400, .7, 'sawtooth', .28, 0, 380); tone(2100, .5, 'square', .12, .05, 700); noise(.8, .45, 5000); },
+  lockpick() { tone(2400, .03, 'square', .05); }, unlock() { tone(600, .1, 'square', .14); tone(900, .16, 'triangle', .18, .1); noise(.3, .15, 2000, .05); },
+  lava() { noise(.5, .3, 600); tone(120, .5, 'sawtooth', .15, 0, 50); }
 };
 
 /* ---------------- app state ---------------- */
-const app = { me: null, room: null, hostId: null, roster: new Map(), view: 'home', diff: 'easy', cfg: null, S: null, A: null, fresh: false, M: null, monsterShown: false, eatenAt: 0, specIdx: 0, noteCode: null, lastSnap: 0, lastPos: 0, lastTick: -1, shownScreen: null, pending: new Map(), holdT: 0, mic: { on: false, muted: false } };
-const me = { x: 0, y: 0, z: 0, vx: 0, vz: 0, vy: 0, yaw: 0, pitch: 0, h: 1.75, stam: 100, stun: 0, inv: 0, ck: { x: 0, z: 0 }, fl: true, eaten: false, ground: true, bob: 0, stepT: 0 };
+const app = { me: null, room: null, hostId: null, roster: new Map(), view: 'home', diff: 'easy', cfg: null, S: null, A: null, fresh: false, M: null, monsterShown: false, eatenAt: 0, specIdx: 0, noteCode: null, lastSnap: 0, lastPos: 0, lastTick: -1, shownScreen: null, pending: new Map(), holdT: 0, mic: { on: false, muted: false }, sentries: [], scare: null, lastCaught: 0, lastFreed: 0, clickT: 0, prevSt: [] };
+const me = { x: 0, y: 0, z: 0, vx: 0, vz: 0, vy: 0, yaw: 0, pitch: 0, h: 1.75, stam: 100, stun: 0, inv: 0, ck: { x: 0, z: 0, y: 0 }, fl: true, eaten: false, jailed: false, ground: true, plat: null, bob: 0, stepT: 0 };
 const isHost = () => app.me && app.hostId === app.me.id;
 const nameOf = id => id === app.me?.id ? 'You' : (app.roster.get(id)?.name || 'Someone');
 const colorOf = id => app.roster.get(id)?.color || '#f1e8da';
@@ -162,36 +177,38 @@ net.on('bcast', m => {
 net.on('close', () => { show('home'); homeErr('Lost connection to the game server.'); app.roster.forEach((r, id) => removeRoster(id)); world.clear(); app.A = app.S = null; });
 
 /* ---------------- areas ---------------- */
-function initS(cfg) { const S = { key: cfg.key, phase: 'play', penalty: 0, eaten: {}, monster: null, screen: null, clearAt: 0 }; app.A.init(S); return S; }
+function initS(cfg) { const S = { key: cfg.key, phase: 'play', penalty: 0, eaten: {}, lost: {}, monster: null, screen: null, clearAt: 0 }; (cfg.lost || []).forEach(id => { S.eaten[id] = true; S.lost[id] = true; }); app.A.init(S); return S; }
 function applyArea(cfg, S) {
   const doIt = () => {
     world.clear(); app.M = null; app.monsterShown = false; app.shownScreen = null; app.noteCode = null; app.pending.clear(); app.lastTick = -1;
-    hemi.color.set(0x9a88c8); hemi.intensity = .7 * (DIFF[cfg.diff].torches > .5 ? 1 : .75);
+    darkness(true); app.scare = null; app.lastCaught = 0; app.lastFreed = 0; app.prevSt = [];
     app.cfg = cfg; app.A = BUILDERS[cfg.idx](world, cfg); app.S = S || initS(cfg); app.fresh = false;
-    scene.fog.far = Math.max(40, app.A.D + 10);
+    app.sentries = Array.from({ length: app.A.sentryCount || 0 }, () => makeSentry(world.root));
     const order = [...app.roster.values()].sort((a, b) => a.joinedAt - b.joinedAt).map(r => r.id);
     const sp = app.A.spawn[Math.max(0, order.indexOf(app.me.id)) % app.A.spawn.length];
-    Object.assign(me, { x: sp.x, y: 0, z: sp.z, vx: 0, vz: 0, vy: 0, yaw: 0, pitch: -.05, stun: 0, inv: 0, ck: { x: sp.x, z: sp.z }, eaten: !!app.S.eaten[app.me.id], stam: 100 });
+    Object.assign(me, { x: sp.x, y: sp.y || 0, z: sp.z, vx: 0, vz: 0, vy: 0, yaw: 0, pitch: -.05, stun: 0, inv: 0, ck: { x: sp.x, z: sp.z, y: sp.y || 0 }, eaten: !!app.S.eaten[app.me.id], jailed: false, plat: null, ground: true, stam: 100, fl: true });
+    if (app.S.jailed && app.S.jailed[app.me.id]) { const j = app.A.jail.spots[0]; me.x = j.x; me.z = j.z; me.jailed = true; }
     show('game'); $('over').hidden = $('done').hidden = $('menu').hidden = $('keypad').hidden = true; $('notecard').hidden = true; $('chomp').hidden = true;
-    setText('hLevel', `Level ${cfg.level} · Room ${cfg.idx + 1} of 4 · ${DIFF[cfg.diff].label}`); setText('hArea', app.A.name);
-    banner(`Level ${cfg.level} · Room ${cfg.idx + 1} of 4`, app.A.name, false, 2600);
+    setText('hLevel', `Level ${cfg.level} · Room ${cfg.idx + 1} of ${ROOMS} · ${DIFF[cfg.diff].label}`); setText('hArea', app.A.name);
+    banner(`Level ${cfg.level} · Room ${cfg.idx + 1} of ${ROOMS}`, app.A.name, false, 2600);
+    if (app.S.lost[app.me.id]) toast('Your crew left you in the jail. You can watch, and you are back next level.');
     if (document.pointerLockElement !== canvas) $('lockhint').hidden = false;
   };
   if (app.view === 'game') fadeDo(doIt); else doIt();
 }
-function hostStart(level, idx) {
-  const cfg = { key: Math.random().toString(36).slice(2, 9), level, idx, diff: app.diff, n: Math.max(1, app.roster.size), seed: (Math.random() * 2147483647) | 0, startAt: net.now() + 2800, dur: DIFF[app.diff].time };
+function hostStart(level, idx, lost = []) {
+  const cfg = { key: Math.random().toString(36).slice(2, 9), level, idx, diff: app.diff, lost, n: Math.max(1, app.roster.size), seed: (Math.random() * 2147483647) | 0, startAt: net.now() + 2800, dur: DIFF[app.diff].time };
   net.send({ t: 'bcast', e: { type: 'area', cfg } }); applyArea(cfg, null);
 }
-function goLobby() { world.clear(); app.A = app.S = app.cfg = null; app.M = null; if (document.pointerLockElement) document.exitPointerLock(); show('lobby'); renderLobby(); }
+function goLobby() { world.clear(); darkness(false); app.A = app.S = app.cfg = null; app.M = null; app.sentries = []; if (document.pointerLockElement) document.exitPointerLock(); show('lobby'); renderLobby(); }
 function timeLeft() { if (!app.cfg || !app.S) return 0; const el = Math.max(0, (net.now() - app.cfg.startAt) / 1000); return app.cfg.dur - el - (app.S.penalty || 0); }
-function inZone(p, z) { return p.x > z.x0 && p.x < z.x1 && p.z > z.z0 && p.z < z.z1; }
+function inZone(p, z) { return p.x > z.x0 && p.x < z.x1 && p.z > z.z0 && p.z < z.z1 && (z.y0 === undefined || p.y > z.y0); }
 function allPlayers() {
-  const S = app.S, list = [{ id: app.me.id, x: me.x, y: me.y, z: me.z, eaten: !!S.eaten[app.me.id] }];
-  app.roster.forEach(r => { if (r.id !== app.me.id && r.pos) list.push({ id: r.id, x: r.pos.x, y: r.pos.y, z: r.pos.z, eaten: !!S.eaten[r.id] }); });
+  const S = app.S, J = S.jailed || {}, list = [{ id: app.me.id, x: me.x, y: me.y, z: me.z, yaw: me.yaw, fl: me.fl && !me.jailed, eaten: !!S.eaten[app.me.id], jailed: !!J[app.me.id] }];
+  app.roster.forEach(r => { if (r.id !== app.me.id && r.pos) list.push({ id: r.id, x: r.pos.x, y: r.pos.y, z: r.pos.z, yaw: r.pos.yaw, fl: !!r.pos.fl, eaten: !!S.eaten[r.id], jailed: !!J[r.id] }); });
   return list;
 }
-function exitText() { if (!app.S) return ''; const ps = allPlayers().filter(p => !p.eaten); return `At exit ${ps.filter(p => inZone(p, app.A.room.exitZone)).length}/${ps.length}`; }
+function exitText() { if (!app.S) return ''; const ps = allPlayers().filter(p => !p.eaten && !p.jailed); return `At exit ${ps.filter(p => inZone(p, app.A.room.exitZone)).length}/${ps.length}`; }
 function handleRequest(from, e) { if (!app.S || app.S.phase !== 'play') return; app.A.request(app.S, from, e, { now: net.now() }); app.lastSnap = 0; }
 function sendReq(e) { if (isHost()) handleRequest(app.me.id, e); else net.send({ t: 'tohost', e }); }
 
@@ -202,13 +219,17 @@ function hostTick(dt) {
     if (S.phase === 'play') {
       if (now >= app.cfg.startAt - 500) A.hostUpdate(dt, S, ctx);
       if (timeLeft() <= 0) { S.phase = 'monster'; S.monster = { x: 0, z: A.D / 2 + 2.5, face: Math.PI, open: .6, chew: 0, wait: 1.4, moving: false, at: now }; }
-      else if (A.exitOpen(S)) { const alive = ctx.players.filter(p => !p.eaten); if (alive.length && alive.every(p => inZone(p, A.room.exitZone))) { S.phase = 'clear'; S.clearAt = now; } }
+      else {
+        const free = ctx.players.filter(p => !p.eaten && !p.jailed);
+        if (!free.length && ctx.players.some(p => p.jailed)) { S.screen = { type: 'over', reason: 'jail' }; }
+        else if (A.exitOpen(S) && free.length && free.every(p => inZone(p, A.room.exitZone))) { S.phase = 'clear'; S.clearAt = now; S.leftBehind = ctx.players.filter(p => p.jailed).map(p => p.id); }
+      }
     } else if (S.phase === 'clear') {
-      if (now - S.clearAt > 1000) { if (app.cfg.idx < 3) { S.phase = 'switching'; hostStart(app.cfg.level, app.cfg.idx + 1); return; } S.screen = { type: 'done', level: app.cfg.level }; }
+      if (now - S.clearAt > 1000) { if (app.cfg.idx < ROOMS - 1) { S.phase = 'switching'; hostStart(app.cfg.level, app.cfg.idx + 1, [...new Set([...(app.cfg.lost || []), ...(S.leftBehind || [])])]); return; } S.screen = { type: 'done', level: app.cfg.level }; }
     } else if (S.phase === 'monster') {
       const ate = stepMonster(S.monster, dt, ctx.players, (now - S.monster.at) / 1000);
       if (ate) S.eaten[ate] = true;
-      if (!ctx.players.some(p => !p.eaten && !S.eaten[p.id])) { if (!S.allEatenAt) S.allEatenAt = now; else if (now - S.allEatenAt > 2200) S.screen = { type: 'over', level: app.cfg.level, idx: app.cfg.idx }; }
+      if (!ctx.players.some(p => !p.eaten && !S.eaten[p.id])) { if (!S.allEatenAt) S.allEatenAt = now; else if (now - S.allEatenAt > 2200) S.screen = { type: 'over', reason: 'monster' }; }
     }
   }
   const rate = S.phase === 'monster' ? 50 : 100;
@@ -230,9 +251,12 @@ function fx(type, d = {}) {
     case 'rune': SFX.good(d.i); break;
     case 'wrong': SFX.wrong(); toast('Wrong rune. Watch the crystal again.'); break;
     case 'checkpoint': SFX.good(4); toast('Checkpoint reached.'); break;
-    case 'smack': SFX.hit(); hurt(); me.x = me.ck.x; me.z = me.ck.z; me.y = 0; me.vx = me.vz = me.vy = 0; me.inv = 1.4; me.stun = .3; toast('Smacked! Back to your checkpoint.'); break;
+    case 'smack': SFX.hit(); hurt(); respawn(); toast('Smacked off! Back to your checkpoint.'); break;
+    case 'fell': SFX.lava(); hurt(); respawn(); toast('Into the lava. Back to your last checkpoint.'); break;
   }
 }
+
+function respawn() { me.x = me.ck.x; me.z = me.ck.z; me.y = (me.ck.y || 0) + .05; me.vx = me.vz = me.vy = 0; me.inv = 1.4; me.stun = .3; me.plat = null; }
 
 /* ---------------- avatars ---------------- */
 function makeAvatar(color) {
@@ -251,6 +275,11 @@ function makeAvatar(color) {
 }
 function updateAvatars(dt) {
   const tags = app.view === 'game';
+  let li = 0; const fwd = new THREE.Vector3();
+  app.roster.forEach(r => { if (!r.av || !r.av.g.visible || !r.pos || !r.pos.fl || li >= remoteLights.length || !inGame()) return; const L = remoteLights[li++], p = r.pos, av = r.av;
+    L.position.set(av.rx, av.ry + (p.h || 1.75) - .3, av.rz); fwd.set(-Math.sin(p.yaw) * Math.cos(p.pitch), Math.sin(p.pitch), -Math.cos(p.yaw) * Math.cos(p.pitch));
+    L.target.position.copy(L.position).add(fwd); L.intensity = 26 * (av.flk ?? 1); });
+  for (; li < remoteLights.length; li++) remoteLights[li].intensity = 0;
   app.roster.forEach(r => {
     if (!r.av) return; const p = r.pos, av = r.av;
     const eaten = app.S && app.S.eaten[r.id];
@@ -263,7 +292,8 @@ function updateAvatars(dt) {
       av.g.position.set(av.rx, av.ry + (moving ? Math.abs(Math.sin(performance.now() / 90)) * .06 : 0), av.rz);
       av.g.rotation.y = p.yaw + Math.PI; av.head.rotation.x = -p.pitch * .6;
       av.g.scale.y = lerp(av.g.scale.y, (p.h || 1.75) / 1.75, k);
-      av.beam.visible = !!p.fl;
+      const fk = flicker(nearestSentry(av.rx, av.rz)); av.flk = fk;
+      av.beam.visible = !!p.fl && fk > .3; av.beam.material.opacity = .06 * fk;
       av.ring.material.opacity = voice.talking(r.id) ? .9 : 0;
     }
     // name tag (hidden behind walls and far away)
@@ -358,9 +388,11 @@ function showEndButtons() { const h = isHost(); ['retryBtn', 'overLobbyBtn', 'ne
 const ray = new THREE.Raycaster(); ray.far = 2.8; const center = new THREE.Vector2(0, 0);
 let focus = null;
 function findFocus() {
-  focus = null; if (!inGame() || me.eaten || app.S.phase !== 'play') return;
+  focus = null; if (!inGame() || me.eaten || me.jailed || app.scare || app.S.phase !== 'play') return;
   ray.setFromCamera(center, camera);
-  const hits = ray.intersectObjects(world.root.children, true);
+  // only test what's within reach, so huge rooms stay fast
+  const near = world.root.children.filter(o => { const dx = o.position.x - me.x, dz = o.position.z - me.z; if (dx * dx + dz * dz < 30) return true; const g = o.geometry; if (!g) return false; if (!g.boundingSphere) g.computeBoundingSphere(); return g.boundingSphere.radius > 3; });
+  const hits = ray.intersectObjects(near, true);
   for (const h of hits) { if (h.object.userData.ink || !h.object.visible) continue; const pid = h.object.userData.pid; if (pid) { const info = app.A.info(pid, app.S); if (info) focus = { pid, info }; } break; }
 }
 function pressInteract() {
@@ -380,15 +412,17 @@ function updateInteract(dt) {
   const html = info.done ? esc(info.label) : pending ? 'Searching…' : `<b>${info.hold ? 'Hold E' : 'E'}</b>${esc(info.label)}`;
   if (pr._h !== html) { pr._h = html; pr.innerHTML = html; }
   if (info.hold && !info.done && !pending && keys.KeyE && me.stun <= 0) {
-    app.holdT += dt; const need = DIFF[app.cfg.diff].search; ring.hidden = false;
+    app.holdT += dt; const need = info.holdTime || DIFF[app.cfg.diff].search; ring.hidden = false; if (pid === 'jail' && Math.random() < .08) SFX.lockpick();
     $('ringC').setAttribute('stroke-dashoffset', 138.2 * (1 - Math.min(1, app.holdT / need)));
-    if (app.holdT >= need) { app.holdT = 0; app.pending.set(pid, performance.now()); sendReq({ type: 'search', pid }); noise(.2, .08, 900); }
+    if (app.holdT >= need) { app.holdT = 0; app.pending.set(pid, performance.now()); sendReq(pid === 'jail' ? { type: 'free' } : { type: 'search', pid }); noise(.2, .08, 900); }
   } else { app.holdT = 0; ring.hidden = true; }
 }
 
 /* ---------------- local player ---------------- */
 function updateMe(dt) {
-  const S = app.S; const frozen = app.padOpen || app.chatting || !!S.screen || S.phase === 'clear' || document.pointerLockElement !== canvas;
+  const S = app.S; const frozen = app.padOpen || app.chatting || !!S.screen || S.phase === 'clear' || !!app.scare || document.pointerLockElement !== canvas;
+  const pt = (net.now() - app.cfg.startAt) / 1000;
+  if (me.plat && me.plat.pos) { const a = me.plat.pos(pt - dt), b = me.plat.pos(pt); me.x += b.x - a.x; me.z += b.z - a.z; me.y += b.y - a.y; }
   me.stun = Math.max(0, me.stun - dt); me.inv = Math.max(0, me.inv - dt);
   let ix = 0, iz = 0;
   if (!frozen) { if (keys.KeyW || keys.ArrowUp) iz -= 1; if (keys.KeyS || keys.ArrowDown) iz += 1; if (keys.KeyA || keys.ArrowLeft) ix -= 1; if (keys.KeyD || keys.ArrowRight) ix += 1; }
@@ -404,7 +438,9 @@ function updateMe(dt) {
   me.vx = lerp(me.vx, wx * speed, Math.min(1, dt * ctl)); me.vz = lerp(me.vz, wz * speed, Math.min(1, dt * ctl));
   me.x += me.vx * dt; me.z += me.vz * dt;
   if (!frozen && keys.Space && me.ground && !crouch && me.stun <= 0) { me.vy = 6.2; me.ground = false; SFX.jump(); }
-  me.vy -= 20 * dt; me.y += me.vy * dt; if (me.y <= 0) { if (!me.ground && me.vy < -3) SFX.step(); me.y = 0; me.vy = 0; me.ground = true; }
+  const prevFeet = me.y; me.vy -= 20 * dt; me.y += me.vy * dt;
+  const gr = me.vy <= 0 ? app.A.ground(me, prevFeet, pt) : null;
+  if (gr) { if (!me.ground && me.vy < -3) SFX.step(); me.y = gr.top; me.vy = 0; me.ground = true; me.plat = gr.plat || null; } else { me.ground = false; me.plat = null; }
   collide(me, world.solids, .35);
   app.roster.forEach(r => { if (r.id === app.me.id || !r.pos || app.S.eaten[r.id]) return; const dx = me.x - r.pos.x, dz = me.z - r.pos.z, d = Math.hypot(dx, dz); if (d > 0 && d < .7) { me.x += dx / d * (.7 - d); me.z += dz / d * (.7 - d); } });
   me.h = lerp(me.h, crouch ? 1.15 : 1.75, Math.min(1, dt * 12));
@@ -413,8 +449,13 @@ function updateMe(dt) {
   const bob = Math.sin(me.bob) * .045 * Math.min(1, sp / 4);
   const shake = me.stun > 0 ? (Math.random() - .5) * .04 : 0;
   camera.position.set(me.x, me.y + me.h - .12 + bob, me.z); camera.rotation.set(me.pitch + shake, me.yaw + shake, 0);
-  flash.visible = me.fl;
+  flash.visible = me.fl && !me.jailed; flash.intensity = 30 * flicker(nearestSentry(me.x, me.z));
   setText('stamI', ''); $('stamI').style.width = me.stam + '%'; $('stam').style.opacity = me.stam < 99 ? 1 : 0;
+}
+function scareCam(dt) {
+  const sc = app.scare, V = app.sentries[sc.by], since = performance.now() - sc.at;
+  if (V) { const px = V.rx + Math.sin(V.rf) * .75, pz = V.rz + Math.cos(V.rf) * .75; camera.position.set(px + (Math.random() - .5) * .05, .75 + (Math.random() - .5) * .05, pz); camera.lookAt(V.rx, .7, V.rz); flash.visible = true; flash.intensity = 40 * (Math.random() < .5 ? 1 : .1); }
+  if (since > 1100) { app.scare = null; $('chomp').hidden = true; const order = [...app.roster.values()].sort((a, b) => a.joinedAt - b.joinedAt).map(r => r.id); const j = app.A.jail.spots[Math.max(0, order.indexOf(app.me.id)) % app.A.jail.spots.length]; me.x = j.x; me.z = j.z; me.y = 0; me.vx = me.vz = 0; me.jailed = true; me.yaw = 0; me.pitch = 0; toast('You are locked in the jail. Your crew can pick the lock, if they want to.'); }
 }
 function spectate(dt) {
   const S = app.S; const since = performance.now() - app.eatenAt;
@@ -427,7 +468,7 @@ function spectate(dt) {
   const living = [...app.roster.values()].filter(r => r.id !== app.me.id && r.pos && !S.eaten[r.id]);
   const sp = $('spec');
   if (living.length) {
-    const r = living[app.specIdx % living.length], p = r.pos; sp.hidden = false; setText('spec', `You were eaten. Watching ${r.name} · click to switch · only other ghosts can hear you`);
+    const r = living[app.specIdx % living.length], p = r.pos; sp.hidden = false; setText('spec', `${S.lost && S.lost[app.me.id] ? 'Left behind in the jail' : 'You were eaten'}. Watching ${r.name} · click to switch · only other ghosts can hear you`);
     camera.position.lerp(new THREE.Vector3(p.x, p.y + (p.h || 1.75) - .12, p.z), Math.min(1, dt * 10)); camera.rotation.set(p.pitch, p.yaw, 0);
   } else if (app.M) { sp.hidden = false; setText('spec', 'Everyone was eaten.'); const m = app.M.g.position; camera.position.lerp(new THREE.Vector3(m.x + 5, 4, m.z + 5), dt * 2); camera.lookAt(m.x, 1.5, m.z); }
 }
@@ -448,7 +489,19 @@ function frame() {
       animMonster(app.M, S.monster, dt, t);
     }
     if (S.eaten[app.me.id] && !me.eaten) { me.eaten = true; app.eatenAt = performance.now(); SFX.chomp(); hurt(); $('chomp').hidden = false; $('notecard').hidden = true; }
-    if (me.eaten) spectate(dt); else updateMe(dt);
+    // sentries
+    if (S.sentries) {
+      let best = 1e9, bi = -1;
+      S.sentries.forEach((s, i) => { const V = app.sentries[i]; if (!V) return; animSentry(V, s, dt, t); V.g.visible = S.phase !== 'monster' || true; const d = Math.hypot(s.x - me.x, s.z - me.z); if (d < best) { best = d; bi = i; } if (s.st === 'hunt' && app.prevSt[i] !== 'hunt' && d < 12 && app.fresh) SFX.screech(); app.prevSt[i] = s.st; });
+      app.clickT -= dt;
+      if (bi >= 0 && best < 15 && app.clickT <= 0 && !me.eaten) { const s = S.sentries[bi]; app.clickT = s.st === 'hunt' ? .14 + Math.random() * .1 : .5 + best * .06 + Math.random() * .4; const ang = Math.atan2(s.x - me.x, s.z - me.z) - (me.yaw + Math.PI); click((1 - best / 15) * .22, -Math.sin(ang)); }
+    }
+    // jail
+    const J = S.jailed || {};
+    if (S.caught && S.caught.length) { const c = S.caught[S.caught.length - 1]; if (c.at !== app.lastCaught) { app.lastCaught = c.at; if (app.fresh) { if (c.id === app.me.id) { app.scare = { at: performance.now(), by: c.by }; SFX.screech(); hurt(); $('notecard').hidden = true; } else toast(`A sentry dragged ${nameOf(c.id)} off to the jail!`); } } }
+    if (S.freedAt && S.freedAt !== app.lastFreed) { app.lastFreed = S.freedAt; if (app.fresh) { SFX.unlock(); toast(`${nameOf(S.freedBy)} picked the jail lock!`); } }
+    if (me.jailed && !J[app.me.id]) { me.jailed = false; const o = app.A.jail.out; me.x = o.x + (Math.random() - .5) * 2; me.z = o.z + Math.random() * .6; }
+    if (me.eaten) spectate(dt); else if (app.scare) scareCam(dt); else updateMe(dt);
     world.update(dt, t, S.phase === 'monster');
     A.render(dt, S, { now, me, fx, fresh: app.fresh, phase: S.phase, exitText }); app.fresh = true;
     if (!me.eaten) updateInteract(dt); else { $('prompt').hidden = true; $('ring').hidden = true; }
@@ -462,12 +515,12 @@ function frame() {
     // end screens
     if (S.screen && app.shownScreen !== S.screen.type) {
       app.shownScreen = S.screen.type; if (document.pointerLockElement) document.exitPointerLock(); $('menu').hidden = true; showEndButtons();
-      if (S.screen.type === 'over') { $('overEyebrow').textContent = `Level ${app.cfg.level} · Room ${app.cfg.idx + 1} of 4 · ${A.name}`; const n = allPlayers().length; $('overText').textContent = n === 1 ? 'The clock ran out and the monster found you.' : `The clock ran out and the monster ate all ${n} of you, one crunchy crewmate at a time.`; $('over').hidden = false; }
-      else { SFX.win(); $('doneTitle').textContent = `Level ${app.cfg.level} escaped`; $('doneText').textContent = `Level ${app.cfg.level + 1} has more keys, more fake keys, faster traps and a longer rune pattern. Same ${DIFF[app.cfg.diff].label.toLowerCase()} clock: ${fmt(DIFF[app.cfg.diff].time)} per room.`; $('done').hidden = false; }
+      if (S.screen.type === 'over') { $('overEyebrow').textContent = `Level ${app.cfg.level} · Room ${app.cfg.idx + 1} of ${ROOMS} · ${A.name}`; const n = allPlayers().length; $('overText').textContent = S.screen.reason === 'jail' ? (n === 1 ? 'A sentry dragged you to the jail and nobody was left to pick the lock.' : 'The sentries locked up every last one of you. Nobody was left to pick the lock.') : n === 1 ? 'The clock ran out and the monster found you.' : `The clock ran out and the monster ate all ${n} of you, one crunchy crewmate at a time.`; $('over').hidden = false; }
+      else { SFX.win(); $('doneTitle').textContent = `Level ${app.cfg.level} escaped`; $('doneText').textContent = `Level ${app.cfg.level + 1} has a bigger study with more keys, more sentries and a longer platform course. Same ${DIFF[app.cfg.diff].label.toLowerCase()} clock: ${fmt(DIFF[app.cfg.diff].time)} per room. Anyone left behind comes back.`; $('done').hidden = false; }
     }
     if (!S.screen) { $('over').hidden = true; $('done').hidden = true; }
     // send my pose
-    if (performance.now() - app.lastPos > 66) { app.lastPos = performance.now(); if (!me.eaten) net.send({ t: 'pos', p: { x: +me.x.toFixed(2), y: +me.y.toFixed(2), z: +me.z.toFixed(2), yaw: +me.yaw.toFixed(3), pitch: +me.pitch.toFixed(3), h: +me.h.toFixed(2), fl: me.fl } }); }
+    if (performance.now() - app.lastPos > 66) { app.lastPos = performance.now(); if (!me.eaten && !app.scare) net.send({ t: 'pos', p: { x: +me.x.toFixed(2), y: +me.y.toFixed(2), z: +me.z.toFixed(2), yaw: +me.yaw.toFixed(3), pitch: +me.pitch.toFixed(3), h: +me.h.toFixed(2), fl: me.fl && !me.jailed } }); }
     renderRoster();
   } else if (app.view === 'home' || app.view === 'lobby') {
     camera.position.set(Math.sin(t * .1) * 6, 2.2, Math.cos(t * .1) * 6); camera.lookAt(0, 1.4, 0);
@@ -487,9 +540,9 @@ function frame() {
 let rosterHtml = '';
 function renderRoster() {
   const S = app.S; const html = [...app.roster.values()].sort((a, b) => a.joinedAt - b.joinedAt).map(r => {
-    const out = S.eaten[r.id], talk = r.id === app.me.id ? voice.micLevel() > .02 : voice.talking(r.id);
+    const out = S.eaten[r.id], jailed = (S.jailed || {})[r.id], talk = r.id === app.me.id ? voice.micLevel() > .02 : voice.talking(r.id);
     const atExit = r.id === app.me.id ? inZone(me, app.A.room.exitZone) : r.pos && inZone(r.pos, app.A.room.exitZone);
-    return `<div class="rp${out ? ' out' : ''}${talk ? ' talk' : ''}"><span class="dot" style="background:${r.color}"></span>${esc(r.id === app.me.id ? r.name + ' (you)' : r.name)}${r.id === app.hostId ? ' · host' : ''}${atExit && !out ? ' · at exit' : ''}${out ? ' · eaten' : ''}</div>`;
+    return `<div class="rp${out ? ' out' : ''}${talk ? ' talk' : ''}"><span class="dot" style="background:${r.color}"></span>${esc(r.id === app.me.id ? r.name + ' (you)' : r.name)}${r.id === app.hostId ? ' · host' : ''}${jailed ? ' · in jail' : ''}${atExit && !out && !jailed ? ' · at exit' : ''}${out ? (S.lost[r.id] ? ' · left behind' : ' · eaten') : ''}</div>`;
   }).join('');
   if (html !== rosterHtml) { rosterHtml = html; $('roster').innerHTML = html; }
 }
@@ -497,7 +550,7 @@ function renderRoster() {
 // A little monster idling behind the home and lobby screens.
 let menuM = null;
 function menuScene(dt, t) {
-  if (!menuM) { world.clear(); const f = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshToonMaterial({ color: 0x2a2236 })); f.rotation.x = -Math.PI / 2; world.root.add(f); world.torch(-3, -2, Math.PI / 4, 10); world.torch(3, -2, -Math.PI / 4, 10); menuM = makeMonster(world.root); menuM.g.position.x = 1.5; }
+  if (!menuM) { world.clear(); darkness(false); const f = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshToonMaterial({ color: 0x2a2236 })); f.rotation.x = -Math.PI / 2; world.root.add(f); world.torch(-3, -2, Math.PI / 4, 10); world.torch(3, -2, -Math.PI / 4, 10); menuM = makeMonster(world.root); menuM.g.position.x = 1.5; }
   if (!menuM.g.parent || menuM.g.parent !== world.root) { menuM = null; return; }
   animMonster(menuM, { x: 1.5, z: 0, face: Math.sin(t * .4) * .5, open: .25 + Math.max(0, Math.sin(t * 1.3)) * .6, chew: 0, moving: false }, dt, t);
   world.update(dt, t, false);
