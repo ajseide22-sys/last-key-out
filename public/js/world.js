@@ -25,7 +25,7 @@ export const TEX = {
 export class World {
   constructor(scene) { this.scene = scene; this.root = new THREE.Group(); scene.add(this.root); this.solids = []; this.flickers = []; this.tickers = []; this.hit = []; }
   clear() {
-    this.root.traverse(o => { if (o.userData.ink) return; if (o.geometry) o.geometry.dispose(); const ms = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : []; ms.forEach(m => { if (m.map) m.map.dispose(); if (!m.gradientMap) m.dispose(); }); });
+    this.root.traverse(o => { if (o.userData.ink) return; if (o.geometry) o.geometry.dispose(); const ms = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : []; ms.forEach(m => { if (m.userData && m.userData.keep) return; if (m.map) m.map.dispose(); if (!m.gradientMap) m.dispose(); }); });
     this.scene.remove(this.root); this.root = new THREE.Group(); this.scene.add(this.root);
     this.solids = []; this.flickers = []; this.tickers = []; this.hit = [];
   }
@@ -86,6 +86,48 @@ export class World {
       W, D, H, door, floorMesh, opened: false, exitZone: { x0: -gap / 2, x1: gap / 2, z0: -D / 2 - T - CD, z1: -D / 2 - T - .3 },
       smash: () => { board.visible = false; },
       open: () => { if (room.opened) return; room.opened = true; door.userData.solid.on = false; lampM.color.set(0x7dffc4); lockM.color.set(0x7dffc4); this.anim(.9, k => { door.position.y = 1.3 + k * 2.9; cl.intensity = k * 8; }); }
+    };
+    return room;
+  }
+  // A closed manor with no visible exit. A secret chamber sits behind one side wall at z = sz,
+  // reached through a bookshelf door that slides aside when the combination is entered.
+  manor(W, D, o) {
+    const T = .4, H = o.height || 3.6, gap = 1.7, side = o.side || 1, sz = o.sz || 0;
+    const floorMesh = this.floor(W, D, o.floor);
+    const ceil = new THREE.Mesh(new THREE.PlaneGeometry(W + 1, D + 1), new THREE.MeshToonMaterial({ color: o.ceil || 0x1d1626 })); ceil.rotation.x = Math.PI / 2; ceil.position.y = H; this.root.add(ceil);
+    const wm = new THREE.MeshToonMaterial({ map: this.tex(o.wall, W / 3.5, 1) }), wmS = new THREE.MeshToonMaterial({ map: this.tex(o.wall, D / 3.5, 1) });
+    const trim = toon(o.trim || P.woodDark);
+    this.box(W + 2 * T, H, T, wm, 0, H / 2, -D / 2 - T / 2, true, false, true);
+    this.box(W + 2 * T, H, T, wm, 0, H / 2, D / 2 + T / 2, true, false, true);
+    this.box(T, H, D + 2 * T, wmS, -side * (W / 2 + T / 2), H / 2, 0, true, false, true);
+    const wx = side * (W / 2 + T / 2), a0 = -D / 2 - T, a1 = sz - gap / 2, b0 = sz + gap / 2, b1 = D / 2 + T;
+    this.box(T, H, a1 - a0, wmS, wx, H / 2, (a0 + a1) / 2, true, false, true);
+    this.box(T, H, b1 - b0, wmS, wx, H / 2, (b0 + b1) / 2, true, false, true);
+    this.box(T, H - 2.5, gap, wmS, wx, 2.5 + (H - 2.5) / 2, sz);
+    [[W, .18, .06, 0, .09, -D / 2 + .03], [W, .18, .06, 0, .09, D / 2 - .03], [.06, .18, D, -W / 2 + .03, .09, 0], [.06, .18, D, W / 2 - .03, .09, 0]].forEach(a => this.box(a[0], a[1], a[2], trim, a[3], a[4], a[5]));
+    // the chamber
+    const CW = 4, CD = 4.2, cx = side * (W / 2 + T + CD / 2);
+    this.floor(CD, CW, this.tex(TEX.stone(150, 24), 1.5, 1.5), cx, sz);
+    const cm = new THREE.MeshToonMaterial({ map: this.tex(TEX.brick, 1.5, 1) });
+    this.box(CD + T, H, T, cm, cx, H / 2, sz - CW / 2 - T / 2, true, false, true);
+    this.box(CD + T, H, T, cm, cx, H / 2, sz + CW / 2 + T / 2, true, false, true);
+    this.box(T, H, CW + 2 * T, cm, side * (W / 2 + T + CD + T / 2), H / 2, sz, true, false, true);
+    const cc = new THREE.Mesh(new THREE.PlaneGeometry(CD, CW), new THREE.MeshToonMaterial({ color: 0x120e18 })); cc.rotation.x = Math.PI / 2; cc.position.set(cx, H, sz); this.root.add(cc);
+    // a stairway down glowing with daylight from below: the way out
+    [[1.9, .1, .12, 0, -1.25], [1.9, .1, .12, 0, 1.25], [.12, .1, 2.6, -.95, 0], [.12, .1, 2.6, .95, 0]].forEach(([w, h, d, x, z]) => { const f = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), toon(0x3a3444)); f.position.set(cx + side * .2 + x, .05, sz + .1 + z); this.root.add(f); });
+    const holeM = new THREE.MeshBasicMaterial({ color: 0xbfe8ff }); const hole = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 2.4), holeM); hole.rotation.x = -Math.PI / 2; hole.position.set(cx + side * .2, .015, sz + .1); this.root.add(hole);
+    const glowL = new THREE.PointLight(0xbfe8ff, 0, 7, 1.4); glowL.position.set(cx, 1.2, sz); this.root.add(glowL);
+    // the bookshelf door
+    const door = new THREE.Group(); door.position.set(wx, 0, sz); this.root.add(door);
+    const shelfM = toon(P.woodDark); const sh = new THREE.Mesh(new THREE.BoxGeometry(.36, 2.45, gap - .04), shelfM); sh.position.y = 1.225; sh.castShadow = sh.receiveShadow = true; door.add(sh);
+    const rng = Math.random; const cols = [P.red, P.teal, P.mustard, P.purple, P.green, P.blue, P.cream];
+    for (let s = 0; s < 5; s++) { const y = .3 + s * .46; let z = -gap / 2 + .1; while (z < gap / 2 - .14) { const bw = .06 + rng() * .06, bh = .26 + rng() * .1; const b = new THREE.Mesh(new THREE.BoxGeometry(.24, bh, bw), toon(cols[Math.floor(rng() * cols.length)])); b.position.set(-side * .08, y + bh / 2 - .1, z + bw / 2); door.add(b); z += bw + .012; } }
+    const odd = new THREE.Mesh(new THREE.BoxGeometry(.3, .32, .07), toon(0x7a1018)); odd.position.set(-side * .14, 1.36, .25); odd.rotation.z = side * .25; door.add(odd); // the book that sticks out
+    const solid = this.solid(wx - T / 2, wx + T / 2, sz - gap / 2, sz + gap / 2, true);
+    const room = {
+      W, D, H, door, floorMesh, opened: false, secret: { x: wx - side * .55, z: sz, side },
+      exitZone: { x0: Math.min(cx - CD / 2 + .6, cx + CD / 2 - .6), x1: Math.max(cx - CD / 2 + .6, cx + CD / 2 - .6), z0: sz - CW / 2 + .3, z1: sz + CW / 2 - .3 },
+      open: () => { if (room.opened) return; room.opened = true; solid.on = false; this.anim(1.4, k => { door.position.z = sz + k * (gap - .05); glowL.intensity = k * 9; }); },
     };
     return room;
   }

@@ -130,6 +130,35 @@ input.code{text-transform:uppercase;letter-spacing:.3em;font-family:var(--displa
 .slider input{flex:1}
 @media (max-width:640px){.timer{font-size:32px}.area{font-size:14px}.screen{background:rgba(13,11,20,.86)}.diffs{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){.timer.danger{animation:none}#chatlog div{animation:none}}
+.money{display:flex;flex-direction:column;align-items:center;gap:0}
+.money b{font-family:var(--display);font-weight:400;font-size:38px;color:#7dff9a;text-shadow:0 3px 0 #000,0 0 18px rgba(125,255,154,.3);font-variant-numeric:tabular-nums}
+.money span{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.money.lost b{color:var(--danger)}
+.clue{font-family:var(--display);font-size:22px;letter-spacing:.2em;color:#ff9a8a;text-shadow:0 2px 6px #000;margin-top:4px}
+.how{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:13.5px;line-height:1.45;color:var(--text);opacity:.9}
+#chomp{position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle,rgba(120,0,20,.25),rgba(0,0,0,.9))}
+.shopcard{max-width:820px!important;width:100%}
+.shophead{display:flex;justify-content:space-between;align-items:baseline;gap:12px;width:100%}
+.shophead b{font-family:var(--display);font-weight:400;font-size:30px;color:#7dff9a}
+.shopbody{display:grid;grid-template-columns:240px 1fr;gap:16px;width:100%;text-align:left}
+#shopPreview{width:100%;height:300px;background:radial-gradient(circle at 50% 70%,#2a2236,#0d0b14);border-radius:14px;border:1px solid var(--line)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap}
+.tab{background:var(--panel-2);border:1px solid var(--line);border-radius:999px;padding:6px 14px;font-weight:500}
+.tab[aria-pressed="true"]{border-color:var(--ember);color:var(--ember)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;max-height:300px;overflow-y:auto;padding-right:4px}
+.item{display:flex;flex-direction:column;align-items:flex-start;gap:4px;background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:10px;text-align:left;min-width:0}
+.item .sw{width:22px;height:22px;border-radius:50%;border:1px solid rgba(255,255,255,.2)}
+.item .sw.icon{background:linear-gradient(135deg,var(--ember),var(--ember-deep))}
+.item .sw.none{background:transparent;border-style:dashed}
+.item .in{font-weight:500}
+.item .pr{font-size:12px;color:var(--muted)}
+.item.own .pr{color:#7dff9a}
+.item[aria-pressed="true"]{border-color:var(--ok);box-shadow:inset 0 0 0 1px var(--ok)}
+.res-row{display:flex;align-items:center;gap:10px;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:8px 12px;text-align:left}
+.res-row .nm{flex:1;min-width:0;font-weight:500}
+.res-row b{font-family:var(--display);font-weight:400;color:#7dff9a}
+.res-row.lost b{color:var(--danger)}
+@media (max-width:700px){.shopbody{grid-template-columns:1fr}#shopPreview{height:200px}}
 </style>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
 </head>
@@ -140,16 +169,17 @@ input.code{text-transform:uppercase;letter-spacing:.3em;font-family:var(--displa
 <!-- HOME -->
 <div id="home" class="screen">
   <div class="card">
-    <div class="eyebrow">First-person online co-op · 1 to 8 players · proximity voice</div>
+    <div class="eyebrow">First-person online co-op horror · 1 to 8 players · proximity voice</div>
     <h1>Last Key <span>Out</span></h1>
-    <p class="lede">You wake up in a pitch-black study with nothing but a flashlight. Search every shelf, drawer and teapot for the keys while monsters creep toward your light and others wait in the dark to jump out. Get caught and you're thrown in jail until a friend picks the lock. Then cross the Grinder, a huge platform course over lava full of fire, lasers and blades. Stay close to hear each other. When time's up, something hungry comes through the wall.</p>
+    <p class="lede">You wake up inside a pitch-black manor with nothing but a flashlight. Solve its puzzles for keys, crack open safes stuffed with cash, and find the four numbers that open the hidden way out. Things live here. They hunt your light, and some wait in the dark to jump out. Get caught and you lose every dollar you're carrying. Escape with your money and spend it on outfits.</p>
     <div class="label">Your name</div>
     <input type="text" id="nameIn" maxlength="16" placeholder="Name your character" autocomplete="nickname">
     <div class="label">Play</div>
     <button class="primary" id="createBtn">Create a room</button>
     <div class="row"><input type="text" id="codeIn" class="code" maxlength="4" placeholder="CODE" autocomplete="off"><button class="ghost" id="joinBtn">Join room</button></div>
     <p class="err" id="homeErr" hidden></p>
-    <p class="fine">Share the room link or the 4-letter code with friends. Voice chat needs a microphone and an https:// address.</p>
+    <div class="row" style="align-items:center"><button class="ghost" id="homeShop">Shop · <span class="walletTxt">$0</span></button></div>
+    <p class="fine">Share the room link or the 4-letter code with friends. Voice chat needs a microphone and an https:// address. Your money and outfits are saved in this browser.</p>
   </div>
 </div>
 
@@ -161,15 +191,15 @@ input.code{text-transform:uppercase;letter-spacing:.3em;font-family:var(--displa
     <p class="fine" id="inviteText"></p>
     <div class="label">Crew</div>
     <div id="lobbyList" class="plist"></div>
-    <div class="label">Voice</div>
-    <div class="row" style="align-items:center"><button class="ghost" id="micBtn">Turn on microphone</button><div class="meter"><i id="lobbyMeter"></i></div></div>
+    <div class="label">You</div>
+    <div class="row" style="align-items:center"><button class="ghost" id="lobbyShop">Shop · <span class="walletTxt">$0</span></button><button class="ghost" id="micBtn">Turn on microphone</button><div class="meter"><i id="lobbyMeter"></i></div></div>
     <p class="err" id="micErr" hidden></p>
-    <div class="label" id="diffLabel">Difficulty · time per room</div>
-    <div id="diffs" class="diffs"></div>
-    <button class="primary" id="startBtn">Start level 1</button>
+    <button class="primary" id="startBtn">Enter the manor</button>
     <p class="fine" id="startNote"></p>
+    <div class="label">How it works</div>
+    <ul class="how"><li>Puzzles (a lever panel, a clock, a piano, a symbol box) each give the crew a <b>key</b>. Clues are written on the walls. A few keys are hidden in furniture too.</li><li>Each key opens one <b>safe</b>. Safes hold cash, and two of them also hold a number for the way out. Furniture has loose cash too.</li><li>If a monster catches you, you <b>lose all the money you're carrying</b> and get locked in the jail until a friend picks the lock.</li><li>Two numbers are on the walls and two are in safes. Find the bookshelf with the red book sticking out and enter all four to open the <b>secret passage</b>. Walk in to escape and keep your money.</li></ul>
     <div class="label">Controls</div>
-    <div class="keys"><b>Mouse</b><span>Look around (click the game to lock the mouse)</span><b>WASD</b><span>Move · Shift to sprint</span><b>Space</b><span>Jump</span><b>C / Ctrl</b><span>Crouch</span><b>E</b><span>Hold to search · press for doors</span><b>F</b><span>Flashlight on and off (sentries hunt the light)</span><b>M</b><span>Mute your mic</span><b>T</b><span>Proximity text chat</span><b>Esc</b><span>Menu</span></div>
+    <div class="keys"><b>Mouse</b><span>Look around (click the game to lock the mouse)</span><b>WASD</b><span>Move · Shift to sprint</span><b>Space</b><span>Jump</span><b>C / Ctrl</b><span>Crouch</span><b>E</b><span>Use, search, read (hold for furniture and safes)</span><b>F</b><span>Flashlight on and off (monsters hunt the light)</span><b>M</b><span>Mute your mic</span><b>T</b><span>Proximity text chat</span><b>Esc</b><span>Menu</span></div>
     <button class="ghost" id="leaveLobby">Leave room</button>
   </div>
 </div>
@@ -178,8 +208,8 @@ input.code{text-transform:uppercase;letter-spacing:.3em;font-family:var(--displa
 <div id="hud" hidden>
   <div class="hud-top">
     <div><div id="hLevel" class="chip"></div><div id="hArea" class="area"></div></div>
-    <div id="hTimer" class="timer">10:00</div>
-    <div class="hud-r"><div id="hProg" class="prog"></div></div>
+    <div class="money"><b id="hMoney">$0</b><span>carrying</span></div>
+    <div class="hud-r"><div id="hKeys" class="prog">Keys 0</div><div id="hClue" class="clue">_ _ _ _</div></div>
   </div>
   <div id="hObj" class="obj"></div>
   <div class="hud-bottom">
@@ -197,12 +227,10 @@ input.code{text-transform:uppercase;letter-spacing:.3em;font-family:var(--displa
 <div id="stam" hidden><i id="stamI"></i></div>
 <div id="lockhint" hidden>Click to look around</div>
 <div id="spec" hidden></div>
-<div id="notecard" hidden><span>A crumpled note says:</span><b id="noteCode"></b><span>Only you can see this. Tell your crew!</span></div>
 <div id="banner"><div class="b1" id="bn1"></div><div class="b2" id="bn2"></div></div>
 <div id="toast"></div>
-<div id="redwash"></div>
 <div id="hurt"></div>
-<div id="chomp" hidden>CHOMP</div>
+<div id="chomp" hidden></div>
 
 <!-- ESC MENU -->
 <div id="menu" class="screen center" hidden>
@@ -211,44 +239,54 @@ input.code{text-transform:uppercase;letter-spacing:.3em;font-family:var(--displa
     <p class="fine">The game keeps running while this is open.</p>
     <button class="primary" id="resumeBtn">Back to the game</button>
     <div class="row"><button class="ghost" id="menuMic">Turn on microphone</button><button class="ghost" id="menuMute">Mute mic (M)</button></div>
+    <div class="slider"><label for="sMusic">Music volume</label><input type="range" id="sMusic" min="0" max="1.5" step=".05" value="1"></div>
     <div class="slider"><label for="sVol">Voice volume</label><input type="range" id="sVol" min="0" max="2" step=".05" value="1"></div>
     <div class="slider"><label for="sBright">Brightness</label><input type="range" id="sBright" min=".6" max="2.4" step=".05" value="1.3"></div>
     <div class="slider"><label for="sSens">Mouse speed</label><input type="range" id="sSens" min=".3" max="2.5" step=".05" value="1"></div>
-    <button class="ghost" id="hostLobbyBtn" hidden>End game and return everyone to the lobby</button>
+    <button class="ghost" id="hostLobbyBtn" hidden>End the round and return everyone to the lobby</button>
     <button class="ghost" id="leaveBtn">Leave room</button>
   </div>
 </div>
 
-<!-- SAFE KEYPAD -->
+<!-- COMBINATION LOCK -->
 <div id="keypad" class="screen center" hidden>
   <div class="card" style="align-items:stretch">
-    <h2>Safe</h2>
-    <p class="fine" id="padHint">Type the code with the number keys, then press Enter.</p>
+    <h2>Combination lock</h2>
+    <p class="fine" id="padHint">Behind the red book is a brass dial with four numbers. Type them, then press Enter.</p>
     <div id="padShow"></div>
     <div class="pad" id="padKeys"></div>
-    <div class="row" style="justify-content:center"><button class="primary" id="padGo">Open</button><button class="ghost" id="padClose">Cancel</button></div>
+    <div class="row" style="justify-content:center"><button class="primary" id="padGo">Try it</button><button class="ghost" id="padClose">Cancel</button></div>
   </div>
 </div>
 
-<!-- END SCREENS -->
-<div id="over" class="screen center" hidden>
+<!-- RESULTS -->
+<div id="results" class="screen center" hidden>
   <div class="card">
-    <div class="eyebrow" id="overEyebrow"></div>
-    <h2 style="color:var(--danger)">Gobbled.</h2>
-    <p class="lede" id="overText"></p>
-    <button class="primary" id="retryBtn">Retry this room</button>
-    <button class="ghost" id="overLobbyBtn">Back to the lobby</button>
-    <p class="fine" id="overWait">Waiting for the host to choose.</p>
+    <div class="eyebrow" id="resEyebrow">Round over</div>
+    <h2 id="resTitle"></h2>
+    <div id="resList" class="plist"></div>
+    <p class="lede" id="resText"></p>
+    <button class="primary" id="againBtn">Play again</button>
+    <button class="ghost" id="resLobbyBtn">Back to the lobby</button>
+    <button class="ghost" id="resShop">Open the shop · <span class="walletTxt">$0</span></button>
+    <p class="fine" id="resWait">Waiting for the host to start the next round.</p>
   </div>
 </div>
-<div id="done" class="screen center" hidden>
-  <div class="card">
-    <div class="eyebrow">You made it out</div>
-    <h2 id="doneTitle"></h2>
-    <p class="lede" id="doneText"></p>
-    <button class="primary" id="nextBtn">Next level</button>
-    <button class="ghost" id="doneLobbyBtn">Back to the lobby</button>
-    <p class="fine" id="doneWait">Waiting for the host to choose.</p>
+
+<!-- SHOP -->
+<div id="shop" class="screen center" hidden>
+  <div class="card shopcard">
+    <div class="shophead"><h2>Shop</h2><b id="shopWallet">$0</b></div>
+    <div class="shopbody">
+      <canvas id="shopPreview"></canvas>
+      <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
+        <div id="shopTabs" class="tabs"></div>
+        <div id="shopGrid" class="grid"></div>
+        <p class="fine" id="shopNote"></p>
+      </div>
+    </div>
+    <p class="fine">Hover an item to try it on. Everyone in the room sees what you wear, including your flashlight color.</p>
+    <button class="ghost" id="shopClose">Done</button>
   </div>
 </div>
 <div id="fade"></div>
