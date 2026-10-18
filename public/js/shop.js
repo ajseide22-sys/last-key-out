@@ -16,7 +16,7 @@ export function bank(amount) { prof.wallet += amount; prof.escapes++; prof.best 
 
 /* ---------------- UI ---------------- */
 const $ = id => document.getElementById(id);
-let cat = 'hat', preview = null, tryOn = null, baseColor = '#ff6b6b';
+let cat = 'model', preview = null, tryOn = null, baseColor = '#ff6b6b';
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function cosWith(id) { const c = getCos(); if (id) c[ITEM[id].cat] = id; return c; }
 
@@ -24,7 +24,7 @@ function render() {
   $('shopWallet').textContent = '$' + prof.wallet.toLocaleString();
   $('shopTabs').innerHTML = CATS.map(c => `<button type="button" class="tab" data-cat="${c.id}" aria-pressed="${c.id === cat}">${c.name}</button>`).join('');
   const items = ITEMS.filter(i => i.cat === cat);
-  const none = `<button type="button" class="item" data-none="1" aria-pressed="${!prof.cos[cat]}"><span class="sw none"></span><span class="in">${cat === 'light' ? 'Warm (default)' : cat === 'color' ? 'Your room color' : 'None'}</span><span class="pr">Free</span></button>`;
+  const none = `<button type="button" class="item" data-none="1" aria-pressed="${!prof.cos[cat]}"><span class="sw none"></span><span class="in">${cat === 'light' ? 'Warm (default)' : cat === 'color' ? 'Default color' : cat === 'model' ? 'Classic Blob' : 'None'}</span><span class="pr">Free</span></button>`;
   $('shopGrid').innerHTML = none + items.map(i => {
     const own = prof.owned.includes(i.id), eq = prof.cos[cat] === i.id;
     const sw = i.hex !== undefined ? `<span class="sw" style="background:#${i.hex.toString(16).padStart(6, '0')}"></span>` : '<span class="sw icon"></span>';
@@ -42,12 +42,12 @@ function rebuildPreview() {
 function initPreview() {
   const canvas = $('shopPreview');
   const r = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true }); r.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
-  const scene = new THREE.Scene(); const cam = new THREE.PerspectiveCamera(35, 1, .1, 50); cam.position.set(0, 1.4, 4.2); cam.lookAt(0, .95, 0);
+  const scene = new THREE.Scene(); const cam = new THREE.PerspectiveCamera(35, 1, .1, 50); cam.position.set(0, 1.5, 4.6); cam.lookAt(0, 1.05, 0);
   scene.add(new THREE.HemisphereLight(0xc8b8ff, 0x302040, 1.3)); const d = new THREE.DirectionalLight(0xffffff, 2.2); d.position.set(2, 3, 3); scene.add(d);
   const spot = new THREE.PointLight(0xfff1d6, 3, 4); spot.position.set(1, 1, 2); scene.add(spot);
   const floor = new THREE.Mesh(new THREE.CircleGeometry(1.1, 32), new THREE.MeshToonMaterial({ color: 0x2a2236 })); floor.rotation.x = -Math.PI / 2; scene.add(floor);
   preview = { r, scene, cam, spot, av: null, t: 0 };
-  const loop = () => { if ($('shop').hidden) { preview.raf = 0; return; } const w = canvas.clientWidth, h = canvas.clientHeight; if (canvas.width !== Math.floor(w * r.getPixelRatio())) { r.setSize(w, h, false); cam.aspect = w / h; cam.updateProjectionMatrix(); } preview.t += .016; if (preview.av) { preview.av.g.rotation.y = Math.sin(preview.t * .6) * .9; if (preview.av.cape) preview.av.cape.rotation.x = .12 + Math.sin(preview.t * 3) * .05; } r.render(scene, cam); preview.raf = requestAnimationFrame(loop); };
+  const loop = () => { if ($('shop').hidden) { preview.raf = 0; return; } const w = canvas.clientWidth, h = canvas.clientHeight; if (canvas.width !== Math.floor(w * r.getPixelRatio())) { r.setSize(w, h, false); cam.aspect = w / h; cam.updateProjectionMatrix(); } preview.t += .016; if (preview.av) { preview.av.g.rotation.y = Math.sin(preview.t * .6) * .9; preview.av.tick(preview.t, false); } r.render(scene, cam); preview.raf = requestAnimationFrame(loop); };
   preview.loop = loop;
 }
 export function openShop(color) {

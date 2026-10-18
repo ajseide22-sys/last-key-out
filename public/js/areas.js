@@ -116,7 +116,7 @@ export function buildManor(world, cfg) {
   const contents = {}; let k = 0;
   A.hiddenKeys = Math.max(1, A.safes.length - A.stations.length);
   for (let i = 0; i < A.hiddenKeys; i++) contents[searchables[k++]] = { c: 'key' };
-  for (let i = 0; i < 5; i++) contents[searchables[k++]] = { c: 'lurker' };
+  for (let i = 0; i < 3; i++) contents[searchables[k++]] = { c: 'lurker' };
   for (; k < searchables.length; k++) { const r = rng(); contents[searchables[k]] = r < .24 ? { c: 'cash', amt: 5 + Math.floor(rng() * 6) * 5 } : r < .32 ? { c: 'trap' } : { c: 'empty' }; }
   A.contents = contents;
   A.safeLoot = A.safes.map((s, i) => ({ amt: 150 + Math.floor(rng() * 11) * 25, digit: i < 2 ? { pos: A.safeDigits[i], digit: +A.code[A.safeDigits[i]] } : null }));
@@ -126,18 +126,18 @@ export function buildManor(world, cfg) {
 
   // monsters
   A.nav = buildNav(world.solids, W, D); A.nav.walls = world.solids.filter(s => s.wall);
-  A.sentryCount = Math.min(3 + Math.floor(n / 2) + Math.min(cfg.round, 3), 10);
+  A.sentryCount = Math.min(2 + Math.floor(n / 3) + Math.min(cfg.round - 1, 2), 6);
   const sStart = []; for (let i = 0; i < A.sentryCount; i++) { let p; for (let t = 0; t < 200; t++) { p = A.nav.randomFree(rng); if (Math.hypot(p.x, p.z - D / 2) > 14 && !nearJail(p.x, p.z, 2)) break; } sStart.push(p); }
   const KINDS = ['pale', 'crawler', 'hollow'];
-  A.lurkers = []; const lurkN = 6 + Math.floor(n / 2);
-  for (const s of freeSlots) { if (A.lurkers.length >= lurkN) break; const x = s.x + s.nx * .7, z = s.z + s.nz * .7; if (Math.hypot(x, z - D / 2) < 11 || nearJail(x, z, 3) || nearSecret(x, z, 3) || !A.nav.free(A.nav.idx(x, z)) || A.lurkers.some(l => Math.hypot(l.x - x, l.z - z) < 7)) continue; A.lurkers.push({ x, z, f: Math.atan2(s.nx, s.nz), kind: KINDS[A.lurkers.length % 3] }); }
+  A.lurkers = []; const lurkN = 3 + Math.floor(n / 3);
+  for (const s of freeSlots) { if (A.lurkers.length >= lurkN) break; const x = s.x + s.nx * .7, z = s.z + s.nz * .7; if (Math.hypot(x, z - D / 2) < 11 || nearJail(x, z, 3) || nearSecret(x, z, 3) || !A.nav.free(A.nav.idx(x, z)) || A.lurkers.some(l => Math.hypot(l.x - x, l.z - z) < 12)) continue; A.lurkers.push({ x, z, f: Math.atan2(s.nx, s.nz), kind: KINDS[A.lurkers.length % 3] }); }
   const brains = []; const srng = mulberry(cfg.seed ^ 0x5eed);
   const pidMap = new Map(); A.stations.forEach(st => { if (st.kind === 'lever') for (let i = 0; i < 5; i++) pidMap.set('lever:' + i, st); if (st.kind === 'clock') { pidMap.set('clock:face', st); pidMap.set('clock:chime', st); } if (st.kind === 'piano') for (let i = 0; i < 5; i++) pidMap.set('piano:' + i, st); if (st.kind === 'roller') for (let i = 0; i < 3; i++) pidMap.set('roller:' + i, st); });
   const scrawlByPid = new Map(A.scrawls.map(s => [s.pid, s]));
 
   /* ---------------- rules ---------------- */
   A.init = S => {
-    Object.assign(S, { keys: 0, money: {}, opened: {}, safesOpen: {}, solved: {}, pz: {}, clue: {}, door: false, escaped: {}, jailed: {}, caught: [], lurk: {}, alert: null, events: [], evN: 0, freedAt: 0 });
+    Object.assign(S, { keys: 0, money: {}, opened: {}, safesOpen: {}, solved: {}, pz: {}, clue: {}, door: false, escaped: {}, jailed: {}, caught: [], lurk: {}, drops: [], dropN: 0, alert: null, events: [], evN: 0, freedAt: 0 });
     A.stations.forEach(st => st.init(S));
     S.sentries = sStart.map(p => ({ x: +p.x.toFixed(2), z: +p.z.toFixed(2), f: 0, st: 'patrol' }));
   };
@@ -185,19 +185,36 @@ export function buildManor(world, cfg) {
     const alert = S.alert && ctx.now - S.alert.at < 6000 ? S.alert : null;
     const caught = stepSentries(S, brains, A.nav, ps, ctx.now, dt, { speed: CFG.sSpeed, sense: CFG.sense, beam: CFG.beam, grace: CFG.grace, alert }, srng, cfg.startAt);
     const emit = emitter(S);
-    caught.forEach(c => { const lost = S.money[c.id] || 0; S.money[c.id] = 0; S.jailed[c.id] = true; S.caught = (S.caught || []).slice(-6).concat([{ id: c.id, by: c.by, at: ctx.now, lost }]); emit('caught', { by: c.id, lost, s: c.by }); });
+    caught.forEach(c => { const lost = S.money[c.id] || 0; S.money[c.id] = 0; const cp = ps.find(p => p.id === c.id); if (lost > 0 && cp) { const dp = A.nav.nearestFree(cp.x, cp.z), q = dp >= 0 ? A.nav.center(dp) : cp; S.drops.push({ id: ++S.dropN, x: +q.x.toFixed(2), z: +q.z.toFixed(2), amt: lost, by: c.id }); } S.jailed[c.id] = true; S.caught = (S.caught || []).slice(-6).concat([{ id: c.id, by: c.by, at: ctx.now, lost }]); emit('caught', { by: c.id, lost, s: c.by }); });
     if (ctx.now > cfg.startAt + 3000) A.lurkers.forEach((l, i) => { if (S.lurk[i]) return; const p = ps.find(p => !p.jailed && Math.hypot(p.x - l.x, p.z - l.z) < 2.3); if (p) S.lurk[i] = { by: p.id, at: ctx.now }; });
+    // dropped money: walk over a bag to grab it
+    if (S.drops.length) for (const p of ps) { if (p.jailed || S.jailed[p.id]) continue; for (let i = S.drops.length - 1; i >= 0; i--) { const d = S.drops[i]; if (Math.hypot(p.x - d.x, p.z - d.z) < 1.1) { S.drops.splice(i, 1); S.money[p.id] = (S.money[p.id] || 0) + d.amt; emit('pickup', { by: p.id, amt: d.amt, from: d.by, x: d.x, z: d.z }); } } }
     // escaping: walk into the chamber once the bookshelf is open
     if (S.door) ps.forEach(p => { if (!p.jailed && inZone(p, room.exitZone)) { S.escaped[p.id] = S.money[p.id] || 0; emit('escaped', { by: p.id, amt: S.escaped[p.id] }); } });
   };
   const inZone = (p, z) => p.x > z.x0 && p.x < z.x1 && p.z > z.z0 && p.z < z.z1;
   A.inExit = p => inZone(p, room.exitZone);
 
-  const shown = new Set(), shownSafe = new Set();
+  const shown = new Set(), shownSafe = new Set(), bags = new Map();
+  const bagMat = new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: .85 }), billMat = new THREE.MeshStandardMaterial({ color: 0x5aa860, roughness: .7, emissive: 0x1a4a20, emissiveIntensity: .35 });
+  function makeBag(d) {
+    const g = new THREE.Group(); g.position.set(d.x, 0, d.z); world.root.add(g);
+    const sack = new THREE.Mesh(new THREE.SphereGeometry(.26, 14, 10), bagMat); sack.scale.set(1, .85, 1); sack.position.y = .22; sack.castShadow = true; g.add(sack);
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(.06, .11, .12, 10), bagMat); neck.position.y = .46; g.add(neck);
+    const tie = new THREE.Mesh(new THREE.TorusGeometry(.07, .015, 6, 12), new THREE.MeshStandardMaterial({ color: 0xc8a040, metalness: .7, roughness: .3 })); tie.rotation.x = Math.PI / 2; tie.position.y = .44; g.add(tie);
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(.22, .22), new THREE.MeshBasicMaterial({ map: dollarTex(), transparent: true, depthWrite: false })); sign.position.set(0, .24, .265); g.add(sign);
+    for (let k = 0; k < 7; k++) { const b = new THREE.Mesh(new THREE.BoxGeometry(.24, .01, .12), billMat); b.position.set(Math.cos(k * 2.1) * (.35 + k * .05), .01 + k * .003, Math.sin(k * 2.1) * (.35 + k * .05)); b.rotation.y = k * 1.3; g.add(b); }
+    const glow = new THREE.PointLight(0x7dff9a, .9, 2.4, 2); glow.position.y = .5; g.add(glow); // a faint shimmer so the crew can find it
+    return { g, glow };
+  }
+  let dTex = null; function dollarTex() { if (dTex) return dTex; const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'); x.fillStyle = '#e8d8a0'; x.font = 'bold 50px serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('$', 32, 36); dTex = new THREE.CanvasTexture(c); return dTex; }
   A.render = (dt, S, ctx) => {
     for (const pid in S.opened) { if (shown.has(pid)) continue; shown.add(pid); const pr = A.props.get(pid); if (pr) world.anim(.5, pr.open); }
     for (const pid in S.safesOpen) { if (shownSafe.has(pid)) continue; shownSafe.add(pid); const pr = A.props.get(pid); if (pr) world.anim(.8, pr.open); }
     A.stations.forEach(st => st.render(dt, S));
+    const live = new Set((S.drops || []).map(d => d.id));
+    for (const d of S.drops || []) if (!bags.has(d.id)) bags.set(d.id, makeBag(d));
+    for (const [id, b] of bags) { if (!live.has(id)) { world.root.remove(b.g); bags.delete(id); } else { b.glow.intensity = .7 + Math.sin(ctx.now / 300 + id) * .3; b.g.rotation.y += dt * .3; } }
     if (S.door && !room.opened) room.open();
     const jk = Object.keys(S.jailed || {}).length; A.jail.light.intensity = (jk ? 6 : 2.5) * (.8 + Math.sin(ctx.now / 180) * .2);
   };

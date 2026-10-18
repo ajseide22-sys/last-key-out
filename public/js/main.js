@@ -260,7 +260,8 @@ function fx(e) {
     case 'door': SFX.door(); banner('A bookshelf slides open', 'The way out', false, 3200); toast(`${mine ? 'You' : who} cracked the combination. Get to the secret passage!`); break;
     case 'comboWrong': if (mine) { SFX.wrong(); toast('The dial won\'t budge. Wrong combination.'); } break;
     case 'freed': SFX.unlock(); toast(`${mine ? 'You' : who} picked the jail lock!`); break;
-    case 'caught': if (mine) { app.scare = { at: performance.now(), by: e.s }; SFX.screech(); SFX.lose(); hurt(); $('chomp').hidden = false; toast(e.lost ? `It caught you. You lost ${money(e.lost)}.` : 'It caught you.'); } else toast(`A monster dragged ${who} to the jail${e.lost ? ` and they lost ${money(e.lost)}` : ''}!`); break;
+    case 'caught': if (mine) { app.scare = { at: performance.now(), by: e.s }; SFX.screech(); SFX.lose(); hurt(); $('chomp').hidden = false; toast(e.lost ? `It caught you. You dropped ${money(e.lost)} where it got you.` : 'It caught you.'); } else toast(`A monster dragged ${who} to the jail${e.lost ? `. They dropped ${money(e.lost)}. Grab it before it's gone for good!` : '!'}`); break;
+    case 'pickup': SFX.cash(); toast(mine ? `You picked up ${money(e.amt)}${e.from === app.me.id ? ' of your own money' : ` that ${nameOf(e.from)} dropped`}.` : `${who} picked up ${money(e.amt)}${e.from === e.by ? '' : ` dropped by ${nameOf(e.from)}`}.`); break;
     case 'escaped': if (mine) { SFX.win(); banner('You escaped', `with ${money(e.amt)}`, false, 3500); } else toast(`${who} escaped with ${money(e.amt)}!`); break;
   }
 }
@@ -281,7 +282,7 @@ function updateAvatars(dt) {
       av.g.position.set(av.rx, av.ry + (moving ? Math.abs(Math.sin(performance.now() / 90)) * .06 : 0), av.rz);
       av.g.rotation.y = p.yaw + Math.PI; av.head.rotation.x = -p.pitch * .6;
       av.g.scale.y = lerp(av.g.scale.y, (p.h || 1.75) / 1.75, k);
-      if (av.cape) av.cape.rotation.x = .12 + (moving ? .35 : 0) + Math.sin(performance.now() / 200) * .04;
+      av.tick(performance.now() / 1000, moving);
       const fk = flicker(nearestSentry(av.rx, av.rz));
       av.beam.visible = !!p.fl && fk > .3; av.beam.material.opacity = .06 * fk;
       av.ring.material.opacity = voice.talking(r.id) ? .9 : 0;
