@@ -97,8 +97,9 @@ let nextId = 1;
 const COLORS = ['#ff6b6b', '#4dd6ff', '#ffd23f', '#8cff6b', '#c38bff', '#ff9a3c', '#ff7ac8', '#f1e8da'];
 
 function makeCode() { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; let c; do { c = Array.from({ length: 4 }, () => A[crypto.randomInt(A.length)]).join(''); } while (rooms.has(c)); return c; }
+function cleanMeta(m) { m = m && typeof m === 'object' ? m : {}; const c = m.cos && typeof m.cos === 'object' ? m.cos : {}; const id = v => typeof v === 'string' && /^[a-z]-[a-z]{2,12}$/.test(v) ? v : undefined; return { mic: !!m.mic, muted: !!m.muted, cos: { color: id(c.color), hat: id(c.hat), acc: id(c.acc), light: id(c.light) } }; }
 function cleanName(n) { return String(n || '').replace(/[<>&"'`]/g, '').trim().slice(0, 16) || 'Player'; }
-function publicPlayer(p) { return { id: p.id, name: p.name, color: p.color, joinedAt: p.joinedAt }; }
+function publicPlayer(p) { return { id: p.id, name: p.name, color: p.color, joinedAt: p.joinedAt, meta: p.meta || {} }; }
 function roomList(r) { return [...r.players.values()].map(publicPlayer); }
 function broadcast(r, obj, exceptId) { const s = JSON.stringify(obj); for (const p of r.players.values()) if (p.id !== exceptId) p.ws.send(s); }
 function sendTo(r, id, obj) { const p = r.players.get(id); if (p) p.ws.send(JSON.stringify(obj)); }
@@ -118,7 +119,7 @@ function onConnection(ws) {
       if (!r) return ws.send(JSON.stringify({ t: 'error', code: 'no_room', msg: 'No room with code ' + code + '. Check the code or create a new room.' }));
       if (r.players.size >= MAX_PLAYERS) return ws.send(JSON.stringify({ t: 'error', code: 'full', msg: 'Room ' + code + ' is full (' + MAX_PLAYERS + ' players).' }));
       const used = new Set([...r.players.values()].map(p => p.color));
-      me = { id, ws, name: cleanName(m.name), color: COLORS.find(c => !used.has(c)) || COLORS[0], joinedAt: Date.now() };
+      me = { id, ws, name: cleanName(m.name), color: COLORS.find(c => !used.has(c)) || COLORS[0], joinedAt: Date.now(), meta: cleanMeta(m.meta) };
       room = r; r.players.set(id, me);
       if (!r.hostId) r.hostId = id;
       ws.send(JSON.stringify({ t: 'welcome', id, room: code, hostId: r.hostId, players: roomList(r), area: r.area, snap: r.snap, screen: r.screen, now: Date.now(), iceServers: iceServers() }));
@@ -142,8 +143,8 @@ function onConnection(ws) {
         if (typeof m.to === 'string' && room.players.has(m.to)) sendTo(room, m.to, { t: 'rtc', from: id, data: m.data }); break;
       case 'say': // lobby text, also proximity-filtered in game on the client
         broadcast(room, { t: 'say', id, text: String(m.text || '').slice(0, 140) }, null); break;
-      case 'meta': // mic on/off etc.
-        broadcast(room, { t: 'meta', id, meta: m.meta }, id); break;
+      case 'meta': // mic on/off and cosmetics
+        me.meta = cleanMeta(m.meta); broadcast(room, { t: 'meta', id, meta: me.meta }, id); break;
     }
   });
   ws.on('close', () => {

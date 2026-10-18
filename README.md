@@ -1,31 +1,54 @@
 # Last Key Out
 
-A first-person online co-op escape game for 1–8 players, with proximity voice chat.
+A first-person online co-op horror game for 1–8 players, with proximity voice chat.
 
-Your crew wakes up locked in a haunted manor. Search the shelves, wardrobes, teapots and suits of armor for keys. One key sits in a safe, and only the player who finds the note can see its code. Then clear three more rooms before the clock runs out:
+You wake up inside a pitch-black manor with only a flashlight. Things live in the dark. Solve puzzles to earn keys, use the keys to open safes full of cash, and find the four numbers that open the hidden way out. Escape with your money and spend it on outfits.
 
-1. **The Locked Manor:** a big house split into wings, packed with up to 150 hiding spots. Watch out for fake keys and rats.
-2. **The Pressure Hall:** light every pressure plate at the same time.
-3. **The Grinder:** jump over low bars, duck under high ones, and dodge sliders, spikes and swinging blades.
-4. **The Rune Vault:** a crystal flashes a pattern, and the crew steps on the runes in the same order.
+## How a round works
 
-| Difficulty | Time per room | What changes |
-|---|---|---|
-| Easy | 10:00 | Quick searches, bright rooms |
-| Hard | 5:00 | Fake keys, rat traps, darker rooms, 4-digit safe, faster traps |
-| Impossible | 2:00 | All of the above, plus slow searches and replaying the pattern costs time |
+1. **Puzzles give keys.** Four puzzle stations are spread through the manor. Each one solved gives the crew one key. Their clues are written in red on the walls.
+   - **Lever panel:** each lever flips its own lamp and the lamps next to it. Light all five.
+   - **Grandfather clock:** a wall says *IT STRUCK 7* (or some other hour). Set the hour hand, then pull the chime chain. Ring the wrong hour and the boom draws every monster nearby.
+   - **Piano:** a wall shows a row of colored dots. Play those colors in order.
+   - **Symbol box:** a wall shows three symbols. Turn the three dials to match.
+   - A few extra keys are hidden in furniture.
+2. **Keys open safes.** Each safe takes one key and holds $150–$400. Two safes also hold a number for the way out. Drawers, wardrobes and teapots have loose cash too.
+3. **The money you carry is at risk.** If a monster catches you, you lose **all** the money you're carrying, and it drags you to the jail. A teammate can hold E on the jail lock to free you.
+4. **Escape through the hidden passage.** Two of the four numbers are written on walls and two are inside safes. Each player only sees the numbers they found themselves, shown at the top right, so talk to each other. Find the bookshelf with a red book sticking out, enter the four numbers, and it slides aside. Walk into the passage to escape and bank your money.
 
-When the timer hits zero, a monster smashes through the wall and eats everyone. Eaten players become ghosts. Ghosts can watch and talk to each other, but the living can't hear them.
+The round ends when everyone has escaped or is stuck in the jail. Anyone still jailed at the end keeps nothing. There's no timer and no difficulty setting. The manor grows with each player who joins, and later rounds add more monsters.
 
-More players means bigger rooms, more keys and more plates. Every level after that adds keys, fakes, trap rows and pattern length.
+## The monsters
+
+- **The Pale:** a tall, starved thing with ribs through its skin and a jaw that unhinges.
+- **The Crawler:** a corpse that moves on all fours behind a curtain of black hair, with its head bent the wrong way.
+- **The Hollow:** a gliding shroud with a cracked porcelain face and long grey fingers.
+
+They patrol the dark and come after flashlights. They spot you if you're close with your light on, or if you shine it straight at them. Your flashlight flickers as one gets near, and you'll hear clicking, growls and a heartbeat. Turn your light off (F) to lose them.
+
+Others hide in corners and inside furniture, and jump out screaming when you get close. You can hear them breathing when you're near one.
+
+## Music and sound
+
+The score is generated live: a low drone, slow dissonant chords, a broken music box and the occasional distant knock, scrape or whisper. Shrill strings swell in when a monster closes in. You can change the music and voice volume in the Esc menu.
+
+## The shop
+
+Money you escape with goes into your wallet. Spend it in the shop, from the title screen, the lobby or the results screen:
+
+- **Hats:** beanie, traffic cone, top hat, chef hat, cowboy hat, devil horns, wizard hat, viking helmet, halo, pumpkin head, crown
+- **Accessories:** bow tie, mustache, glasses, scarf, backpack, cape
+- **Colors:** nine body colors, including Solid Gold
+- **Flashlight colors:** cold white, ice blue, toxic green, violet, blood red
+
+Hover an item to try it on in the 3D preview. Everyone in the room sees your outfit and your flashlight color. Your wallet and outfits are saved in your browser (localStorage), so clearing site data resets them.
 
 ## Proximity voice chat
 
-- Voices come from each player's position in 3D, so you can hear which way a teammate is.
-- Voices fade out around 22 m away.
-- Walls muffle voices, so split up and you'll have to shout (or regroup).
-- Turn your mic on in the lobby or from the Esc menu. Press **M** to mute.
-- Press **T** for text chat. Only nearby players see it.
+- Voices come from each player's position, fade out around 22 m, and are muffled by walls.
+- Turn your mic on in the lobby or the Esc menu. Press **M** to mute.
+- Press **T** for text chat. Only players nearby see it.
+- Escaped players can only hear each other.
 
 ## Controls
 
@@ -35,68 +58,46 @@ More players means bigger rooms, more keys and more plates. Every level after th
 | WASD | Move · **Shift** to sprint |
 | Space | Jump |
 | C / Ctrl | Crouch |
-| E | Hold to search, press for doors, the safe and the lectern |
-| F | Flashlight |
+| E | Use, read and turn things · hold to search furniture, open safes and pick the jail lock |
+| F | Flashlight on and off |
 | M | Mute mic |
 | T | Text chat |
-| Esc | Menu (volume, brightness, mouse speed) |
+| Esc | Menu (music, voice, brightness, mouse speed) |
 
 ## Run it
 
-You need [Node.js](https://nodejs.org) 18 or newer. There is nothing to install.
+You need [Node.js](https://nodejs.org) 18 or newer. There's nothing to install.
 
 ```bash
 node server.js
 ```
 
-Open http://localhost:3000. Click **Create a room**, then share the invite link.
+Open http://localhost:3000, create a room, and share the invite link.
 
-### Play with friends online (needed for voice)
+### Play online (needed for voice)
 
-Browsers only allow microphones on `https://` pages (or on `localhost`), so friends need an https address. Pick one of these:
+Browsers only allow microphones on `https://` pages, so friends need an https address:
 
-**Option A: tunnel from your PC (fastest)**
+- **Quick:** run `npx cloudflared tunnel --url http://localhost:3000` in a second terminal and share the `https://…trycloudflare.com` address it prints.
+- **Always on:** push this folder to GitHub and create a free **Web Service** on [Render](https://render.com). Set the build command to `npm install` and the start command to `node server.js`. To update, upload the changed files to GitHub and Render redeploys by itself.
 
-1. Start the game with `node server.js`.
-2. In a second terminal, run `npx cloudflared tunnel --url http://localhost:3000`. You can use [ngrok](https://ngrok.com) instead.
-3. It prints an `https://….trycloudflare.com` address. Open it yourself and send it to your friends.
-
-**Option B: free hosting (always on)**
-
-On [Render](https://render.com), create a **Web Service** from this folder (push it to a GitHub repo first):
-
-- Build command: none
-- Start command: `node server.js`
-
-Render sets `PORT` itself and gives you an https address. Railway, Fly.io and Glitch work the same way.
-
-### If someone can't hear anyone
-
-Voice connects players directly to each other. Some strict networks, like school, office and some mobile carriers, block that, and those players need a TURN relay server. Get free TURN credentials from a provider such as [Metered](https://www.metered.ca/tools/openrelay/), then start the server with:
-
-```bash
-TURN_URL=turn:your.turn.server:443 TURN_USER=username TURN_PASS=password node server.js
-```
-
-## How it works
-
-- `server.js` is a dependency-free Node server. It serves the game, runs the rooms and relays messages. The first player in a room is the host. If the host leaves, the next player takes over without stopping the game.
-- The host's browser runs the rules: what's hidden where, plates, runes, the timer and the monster. It sends the shared state to everyone 10 times a second.
-- Each room is generated from a shared seed, so everyone builds the same manor.
-- Voice uses WebRTC audio, one link per pair of players, played through Web Audio 3D panners.
-- Every prop is built from simple shapes with cel shading and ink outlines (`public/js/props.js`). There are no model files to download, and you can add your own props there.
-- Three.js loads from the jsDelivr CDN, so players need internet access.
+If someone can't hear anyone, their network may block direct connections. Add a TURN server: `TURN_URL=turn:host:443 TURN_USER=… TURN_PASS=… node server.js`.
 
 ## Files
 
 ```
-server.js            game server (rooms, relay, voice signaling)
-public/index.html    lobby, HUD and menus
-public/js/main.js    first-person controls, host loop, avatars, chat
-public/js/areas.js   the four rooms and their rules
-public/js/props.js   the cartoon prop library
-public/js/world.js   rooms, walls, lights, textures, collision
-public/js/monster.js the monster
-public/js/voice.js   proximity voice chat
-public/js/net.js     connection and clock sync
+server.js             game server (rooms, relay, voice signaling, outfits)
+public/index.html     title, lobby, HUD, shop, menus
+public/js/main.js     first-person controls, host loop, events, jump scares, results
+public/js/areas.js    the manor: wings, safes, money, clues, jail, secret passage, rules
+public/js/puzzles.js  the four puzzle stations and the wall writing
+public/js/creatures.js  the three monsters (models, skin, animation)
+public/js/sentry.js   monster pathfinding and light hunting
+public/js/music.js    the generative horror score
+public/js/avatar.js   player avatars and every cosmetic item
+public/js/shop.js     wallet, shop and 3D preview
+public/js/props.js    furniture and hiding spots
+public/js/world.js    rooms, walls, textures, collision
+public/js/voice.js    proximity voice chat
+public/js/net.js      connection and clock sync
 ```
